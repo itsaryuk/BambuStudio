@@ -197,7 +197,7 @@ public:
 #ifdef _M_X64
         result.m_lo = (uint64_t)_mul128(lhs, rhs, &result.m_hi);
 #else
-        result.m_hi = __umulh(lhs, rhs);
+        result.m_hi = __mulh(lhs, rhs);
         result.m_lo = lhs * rhs;
 #endif
 	    return result;
