@@ -112,7 +112,7 @@ std::vector<PerExtruderAdjustments> GCodeEditor::parse_layer_gcode(  const      
         adj.extruder_id               = extruder_id;
         adj.cooling_slow_down_enabled = m_config.slow_down_for_layer_cooling.get_at(extruder_id);
         adj.slow_down_layer_time = float(m_config.slow_down_layer_time.get_at(extruder_id));
-        adj.slow_down_min_speed           = float(m_config.slow_down_min_speed.get_at(extruder_id));
+        adj.slow_down_min_speed           = float(m_config.slow_down_min_speed.get_at(get_filament_config_idx(m_config, extruder_id))); // per-variant row
 
         // Read ConsistentSurface cooling settings
         if (m_config.cooling_slowdown_logic.values.size() > extruder_id)

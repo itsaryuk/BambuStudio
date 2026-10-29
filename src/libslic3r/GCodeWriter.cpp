@@ -474,11 +474,10 @@ std::string GCodeWriter::lazy_lift(LiftType lift_type, bool spiral_vase, bool to
     {
         //BBS
         int extruder_id = filament()->extruder_id();
-        int filament_id = filament()->id();
         double above = this->config.retract_lift_above.get_at(extruder_id);
         double below = this->config.retract_lift_below.get_at(extruder_id);
         if (m_pos.z() >= above && m_pos.z() <= below){
-            target_lift = this->config.z_hop.get_at(filament_id);
+            target_lift = filament()->retract_lift(); // variant-aware row for this filament
             if (tool_change && this->config.prime_tower_lift_height.value > 0) target_lift = this->config.prime_tower_lift_height.value;
         }
     }
@@ -529,11 +528,10 @@ std::string GCodeWriter::eager_lift(const LiftType type, bool tool_change)
     {
         //BBS
         int extruder_id = filament()->extruder_id();
-        int filament_id = filament()->id();
         double above = this->config.retract_lift_above.get_at(extruder_id);
         double below = this->config.retract_lift_below.get_at(extruder_id);
         if (m_pos.z() >= above && m_pos.z() <= below){
-            target_lift = this->config.z_hop.get_at(filament_id);
+            target_lift = filament()->retract_lift(); // variant-aware row for this filament
             if (tool_change && this->config.prime_tower_lift_height.value > 0) target_lift = this->config.prime_tower_lift_height.value;
         }
     }
@@ -661,7 +659,9 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
                 w0.emit_comment(GCodeWriter::full_gcode_comment, "slope lift Z");
                 slop_move = w0.string();
             }
-            else if (m_to_lift_type == LiftType::NormalLift) {
+            // Spiral/slope lifts need a known position (e.g. not after custom G-code). Lift straight up first,
+            // like eager_lift does, instead of travelling XY at layer height and lifting afterwards.
+            else if (m_to_lift_type == LiftType::NormalLift || !this->is_current_position_clear()) {
                 slop_move = _travel_to_z(target.z(), "normal lift Z");
             }
         }

@@ -5805,7 +5805,7 @@ void GCodeProcessor::process_M1020(const GCodeReader::GCodeLine &line)
     float val = 0.f;
     if (line.has_value('S', val)) {
         eid = static_cast<int>(val);
-    } else if (line.raw().length() > 5) {
+    } else if (line.raw().length() > 7) {
         std::string filament_id_str = line.raw().substr(7);
         if (!filament_id_str.empty()) {
              try {

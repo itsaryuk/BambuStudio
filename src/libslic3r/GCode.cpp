@@ -369,8 +369,8 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         OozePrevention::_get_temp(GCode& gcodegen)
     {
         return (gcodegen.layer() != NULL && gcodegen.layer()->id() == 0)
-            ? gcodegen.config().nozzle_temperature_initial_layer.get_at(gcodegen.writer().filament()->id())
-            : gcodegen.config().nozzle_temperature.get_at(gcodegen.writer().filament()->id());
+            ? gcodegen.config().nozzle_temperature_initial_layer.get_at(get_filament_config_idx(gcodegen.config(), gcodegen.writer().filament()->id()))
+            : gcodegen.config().nozzle_temperature.get_at(get_filament_config_idx(gcodegen.config(), gcodegen.writer().filament()->id()));
     }
 
     std::string transform_gcode(const std::string &gcode, Vec2f pos, const Vec2f &translation, float angle)
@@ -460,7 +460,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 amount of retraction. In other words, how far do we move in XY at wipe_speed
                 for the time needed to consume retraction_length at retraction_speed?  */
             // BBS
-            double wipe_dist = scale_(gcodegen.config().wipe_distance.get_at(gcodegen.writer().filament()->id()));
+            double wipe_dist = scale_(gcodegen.config().wipe_distance.get_at(gcodegen.get_filament_config_index(gcodegen.writer().filament()->id())));
 
             /*  Take the stored wipe path and replace first point with the current actual position
                 (they might be different, for example, in case of loop clipping).  */
@@ -836,7 +836,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
 
         std::string toolchange_gcode_str;
 
-        ZHopType z_hope_type = ZHopType(gcodegen.config().z_hop_types.get_at(gcodegen.writer().filament()->id()));
+        ZHopType z_hope_type = ZHopType(gcodegen.config().z_hop_types.get_at(gcodegen.get_filament_config_index(gcodegen.writer().filament()->id())));
         LiftType auto_lift_type = LiftType::NormalLift;
         if (z_hope_type == ZHopType::zhtAuto || z_hope_type == ZHopType::zhtSpiral || z_hope_type == ZHopType::zhtSlope)
             auto_lift_type = LiftType::SpiralLift;
@@ -931,13 +931,13 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 float outer_wall_volumetric_speed = get_outer_wall_volumetric_speed(full_config, *gcodegen.m_print, new_filament_id, gcodegen.get_extruder_id(new_filament_id));
                 config.set_key_value("outer_wall_volumetric_speed", new ConfigOptionFloat(outer_wall_volumetric_speed));
 
-                float old_retract_length = (old_filament_id != -1) ? full_config.retraction_length.get_at(old_filament_id) : 0;
-                float new_retract_length = full_config.retraction_length.get_at(new_filament_id);
+                float old_retract_length = (old_filament_id != -1) ? full_config.retraction_length.get_at(gcodegen.get_filament_config_index(old_filament_id)) : 0;
+                float new_retract_length = full_config.retraction_length.get_at(gcodegen.get_filament_config_index(new_filament_id));
                 float old_retract_length_toolchange = (old_filament_id != -1) ? full_config.retract_length_toolchange.get_at(old_filament_id) : 0;
                 float new_retract_length_toolchange = full_config.retract_length_toolchange.get_at(new_filament_id);
-                float old_filament_retract_length_nc = full_config.filament_retract_length_nc.get_at(old_filament_id);
-                int old_filament_temp = (old_filament_id != -1) ? (gcodegen.on_first_layer()? full_config.nozzle_temperature_initial_layer.get_at(old_filament_id) : full_config.nozzle_temperature.get_at(old_filament_id)) : 210;
-                int new_filament_temp = gcodegen.on_first_layer() ? full_config.nozzle_temperature_initial_layer.get_at(new_filament_id) : full_config.nozzle_temperature.get_at(new_filament_id);
+                float old_filament_retract_length_nc = (old_filament_id != -1) ? full_config.filament_retract_length_nc.get_at(gcodegen.get_filament_config_index(old_filament_id)) : 0;
+                int old_filament_temp = (old_filament_id != -1) ? (gcodegen.on_first_layer()? full_config.nozzle_temperature_initial_layer.get_at(gcodegen.get_filament_config_index(old_filament_id)) : full_config.nozzle_temperature.get_at(gcodegen.get_filament_config_index(old_filament_id))) : 210;
+                int new_filament_temp = gcodegen.on_first_layer() ? full_config.nozzle_temperature_initial_layer.get_at(gcodegen.get_filament_config_index(new_filament_id)) : full_config.nozzle_temperature.get_at(gcodegen.get_filament_config_index(new_filament_id));
                 float new_extruder_retracted_length = gcodegen.m_writer.get_extruder_retracted_length(new_filament_id);
                 Vec3d nozzle_pos = gcode_writer.get_position();
 
@@ -945,9 +945,9 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 float filament_area = float((M_PI / 4.f) * pow(full_config.filament_diameter.get_at(new_filament_id), 2));
                 float purge_length = purge_volume / filament_area;
 
-                int old_filament_e_feedrate = (old_filament_id != -1) ? (int)(60.0 * full_config.filament_max_volumetric_speed.get_at(old_filament_id) / filament_area) : 200;
+                int old_filament_e_feedrate = (old_filament_id != -1) ? (int)(60.0 * full_config.filament_max_volumetric_speed.get_at(gcodegen.get_filament_config_index(old_filament_id)) / filament_area) : 200;
                 old_filament_e_feedrate = old_filament_e_feedrate == 0 ? 100 : old_filament_e_feedrate;
-                int new_filament_e_feedrate = (int)(60.0 * full_config.filament_max_volumetric_speed.get_at(new_filament_id) / filament_area);
+                int new_filament_e_feedrate = (int)(60.0 * full_config.filament_max_volumetric_speed.get_at(gcodegen.get_filament_config_index(new_filament_id)) / filament_area);
                 new_filament_e_feedrate = new_filament_e_feedrate == 0 ? 100 : new_filament_e_feedrate;
                 float wipe_avoid_pos_x      = 0.f;
                 {
@@ -3215,7 +3215,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
                     } else {
                         file.write(this->retract());
                     }
-                    file.write(m_writer.travel_to_z(m_max_layer_z + m_writer.config.z_hop.get_at(initial_extruder_id)));
+                    file.write(m_writer.travel_to_z(m_max_layer_z + m_writer.config.z_hop.get_at(get_filament_config_index(initial_extruder_id))));
                     file.write(this->travel_to(Point(0, 0), erNone, "move to origin position for next object"));
                     m_enable_cooling_markers = true;
                     // Disable motion planner when traveling to first object point.
@@ -3284,7 +3284,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
                 m_wipe_tower->set_rib_offset(print.get_rib_offset());
                 // BBS
                 // file.write(m_writer.travel_to_z(initial_layer_print_height + m_config.z_offset.value, "Move to the first layer height"));
-                file.write(m_writer.travel_to_z(std::max(initial_layer_print_height + m_writer.config.z_hop.get_at(initial_extruder_id),0.4), "Move to the first layer height"));
+                file.write(m_writer.travel_to_z(std::max(initial_layer_print_height + m_writer.config.z_hop.get_at(get_filament_config_index(initial_extruder_id)),0.4), "Move to the first layer height"));
 #if 0
             if (print.config().single_extruder_multi_material_priming) {
                 file.write(m_wipe_tower->prime(*this));
@@ -6154,7 +6154,7 @@ bool GCode::is_enable_overhang_speed()
 
 double GCode::get_path_speed(const ExtrusionPath &path)
 {
-    double min_speed = double(m_config.slow_down_min_speed.get_at(m_writer.filament()->id()));
+    double min_speed = double(m_config.slow_down_min_speed.get_at(get_filament_config_index(m_writer.filament()->id())));
     // set speed
     double speed = 0;
     if (path.role() == erPerimeter) {
@@ -6238,6 +6238,14 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
         enable_seam_slope = satisfy_scarf_seam_angle_threshold;
     }
 
+    bool set_holes_and_compensation_speed = loop.get_customize_flag() == CustomizeFlag::cfCircleCompensation && !loop.has_overhang_paths();
+    // Force scarf on compensated circles, but keep the first-layer / spiral guards above (a sloped seam on
+    // layer 0 drops the nozzle to ~10% of the layer height), and decide before clip_length so the seam gap
+    // isn't clipped twice.
+    if (set_holes_and_compensation_speed && m_config.apply_scarf_seam_on_circles.value && !on_first_layer() && !m_config.spiral_mode) {
+        enable_seam_slope = true;
+    }
+
     // clip the path to avoid the extruder to get exactly on the first point of the loop;
     // if polyline was shorter than the clipping distance we'd get a null polyline, so
     // we discard it in that case
@@ -6245,10 +6253,6 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
     const double clip_length = m_enable_loop_clipping && !enable_seam_slope ? seam_gap : 0;
      // get paths
     ExtrusionPaths paths;
-    bool set_holes_and_compensation_speed = loop.get_customize_flag() == CustomizeFlag::cfCircleCompensation && !loop.has_overhang_paths();
-    if (set_holes_and_compensation_speed && m_config.apply_scarf_seam_on_circles.value) {
-        enable_seam_slope = true;
-    }
     loop.clip_end(clip_length, &paths);
     if (paths.empty()) return "";
 
@@ -7236,7 +7240,7 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
 
     double e_per_mm = m_writer.filament()->e_per_mm3() * _mm3_per_mm;
 
-    double min_speed = double(m_config.slow_down_min_speed.get_at(m_writer.filament()->id()));
+    double min_speed = double(m_config.slow_down_min_speed.get_at(get_filament_config_index(m_writer.filament()->id())));
     // set speed
     auto calc_speed_by_role = [&]() -> void {
         if (path.role() == erPerimeter) {
@@ -8179,13 +8183,13 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
         gcode += m_ooze_prevention.pre_toolchange(*this);
 
     // BBS
-    float new_retract_length = m_config.retraction_length.get_at(new_filament_id);
+    float new_retract_length = m_config.retraction_length.get_at(get_filament_config_index(new_filament_id));
     float new_retract_length_toolchange = m_config.retract_length_toolchange.get_at(new_filament_id);
     float new_extruder_retracted_length = m_writer.get_extruder_retracted_length(new_filament_id);
-    int new_filament_temp = this->on_first_layer() ? m_config.nozzle_temperature_initial_layer.get_at(new_filament_id) : m_config.nozzle_temperature.get_at(new_filament_id);
+    int new_filament_temp = this->on_first_layer() ? m_config.nozzle_temperature_initial_layer.get_at(get_filament_config_index(new_filament_id)) : m_config.nozzle_temperature.get_at(get_filament_config_index(new_filament_id));
     // BBS: if print_z == 0 use first layer temperature
     if (abs(print_z) < EPSILON)
-        new_filament_temp = m_config.nozzle_temperature_initial_layer.get_at(new_filament_id);
+        new_filament_temp = m_config.nozzle_temperature_initial_layer.get_at(get_filament_config_index(new_filament_id));
 
     Vec3d nozzle_pos = m_writer.get_position();
     float old_retract_length, old_retract_length_toolchange, old_filament_retract_length_nc, wipe_volume;
@@ -8207,10 +8211,10 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
         old_filament_id = m_writer.filament() != nullptr ? m_writer.filament()->id() : m_start_gcode_filament;
         old_nozzle_id = m_writer.filament() != nullptr ? group_result->get_nozzle_id(old_filament_id, m_layer_index) : -1;
         old_extruder_id = m_writer.get_curr_extruder_id();
-        old_retract_length = m_config.retraction_length.get_at(old_filament_id);
+        old_retract_length = m_config.retraction_length.get_at(get_filament_config_index(old_filament_id));
         old_retract_length_toolchange = m_config.retract_length_toolchange.get_at(old_filament_id);
-        old_filament_retract_length_nc = m_config.filament_retract_length_nc.get_at(old_filament_id);
-        old_filament_temp = this->on_first_layer()? m_config.nozzle_temperature_initial_layer.get_at(old_filament_id) : m_config.nozzle_temperature.get_at(old_filament_id);
+        old_filament_retract_length_nc = m_config.filament_retract_length_nc.get_at(get_filament_config_index(old_filament_id));
+        old_filament_temp = this->on_first_layer()? m_config.nozzle_temperature_initial_layer.get_at(get_filament_config_index(old_filament_id)) : m_config.nozzle_temperature.get_at(get_filament_config_index(old_filament_id));
 
         //During the filament change, the extruder will extrude an extra length of grab_length for the corresponding detection, so the purge can reduce this length.
         float grab_purge_volume = m_config.grab_length.get_at(new_extruder_id) * 2.4;
@@ -8240,7 +8244,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
         }
         wipe_volume = std::max(0.f, wipe_volume-grab_purge_volume);
 
-        old_filament_e_feedrate = (int) (60.0 * m_config.filament_max_volumetric_speed.get_at(old_filament_id) / filament_area);
+        old_filament_e_feedrate = (int) (60.0 * m_config.filament_max_volumetric_speed.get_at(get_filament_config_index(old_filament_id)) / filament_area);
         old_filament_e_feedrate = old_filament_e_feedrate == 0 ? 100 : old_filament_e_feedrate;
         //BBS: must clean m_start_gcode_filament
         m_start_gcode_filament = -1;
@@ -8253,7 +8257,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
         old_filament_e_feedrate = 200;
     }
     float wipe_length = wipe_volume / filament_area;
-    int new_filament_e_feedrate = (int)(60.0 * m_config.filament_max_volumetric_speed.get_at(new_filament_id) / filament_area);
+    int new_filament_e_feedrate = (int)(60.0 * m_config.filament_max_volumetric_speed.get_at(get_filament_config_index(new_filament_id)) / filament_area);
     new_filament_e_feedrate = new_filament_e_feedrate == 0 ? 100 : new_filament_e_feedrate;
 
     auto extruder_variants = m_print->config().option<ConfigOptionStrings>("printer_extruder_variant")->values;
@@ -8402,8 +8406,8 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
 
     // Set the temperature if the wipe tower didn't (not needed for non-single extruder MM)
     if (m_config.single_extruder_multi_material && !m_config.enable_prime_tower) {
-        int temp = (m_layer_index <= 0 ? m_config.nozzle_temperature_initial_layer.get_at(new_filament_id) :
-                                         m_config.nozzle_temperature.get_at(new_filament_id));
+        int temp = (m_layer_index <= 0 ? m_config.nozzle_temperature_initial_layer.get_at(get_filament_config_index(new_filament_id)) :
+                                         m_config.nozzle_temperature.get_at(get_filament_config_index(new_filament_id)));
         gcode += m_writer.set_temperature(temp, false);
     }
 

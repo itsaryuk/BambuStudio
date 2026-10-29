@@ -119,7 +119,9 @@ std::string SpiralVase::process_layer(const std::string &gcode, bool last_layer)
     std::shared_ptr<std::vector<SpiralVase::SpiralPoint>>  current_layer  = std::make_shared<std::vector<SpiralVase::SpiralPoint>>();
     std::shared_ptr<std::vector<SpiralVase::SpiralPoint>> previous_layer = m_previous_layer;
 
-    bool smooth_spiral = m_smooth_spiral;
+    // Smoothing rescales each line's E word, which is only a length with relative extruder distances;
+    // with absolute E it would rewrite positions and cause retract/blob jumps.
+    bool smooth_spiral = m_smooth_spiral && m_config.use_relative_e_distances.value;
     std::string new_gcode;
     std::string transition_gcode;
     float max_xy_dist_for_smoothing = m_max_xy_smoothing;

@@ -1,3 +1,4 @@
+#include <atomic>
 #include "ElephantFootCompensation.hpp"
 #include "I18N.hpp"
 #include "Layer.hpp"
@@ -483,11 +484,13 @@ bool doesVolumeIntersect(VolumeSlices& vs1, VolumeSlices& vs2)
 
     auto& vs1s = vs1.slices;
     auto& vs2s = vs2.slices;
-    bool is_intersect = false;
+    std::atomic<bool> is_intersect{false};
 
     tbb::parallel_for(tbb::blocked_range<int>(0, vs1s.size()),
         [&vs1s, &vs2s, &is_intersect](const tbb::blocked_range<int>& range) {
             for (auto i = range.begin(); i != range.end(); ++i) {
+                // Another range already found an overlap: stop scanning.
+                if (is_intersect.load(std::memory_order_relaxed)) return;
                 if (vs1s[i].empty()) continue;
 
                 if (overlaps(vs1s[i], vs2s[i])) {
@@ -504,7 +507,7 @@ bool doesVolumeIntersect(VolumeSlices& vs1, VolumeSlices& vs2)
                 }
             }
         });
-    return is_intersect;
+    return is_intersect.load();
 }
 
 //BBS: grouping the volumes of an object according to their connection relationship

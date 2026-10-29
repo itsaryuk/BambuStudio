@@ -20,6 +20,8 @@
 #include <libnest2d/backends/libslic3r/geometries.hpp>
 #include <libnest2d/placers/nfpplacer.hpp>
 
+#include <atomic>
+#include <mutex>
 #include <tbb/blocked_range.h>
 #include <tbb/concurrent_unordered_set.h>
 #include <tbb/concurrent_vector.h>
@@ -893,6 +895,7 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
     trim_tail_empty(enforcers);
     trim_tail_empty(blockers);
 
+    std::mutex cantilever_mutex; // guards max_cantilever_dist across the parallel loop
     tbb::parallel_for(tbb::blocked_range<size_t>(0, m_object->layer_count()),
         [&](const tbb::blocked_range<size_t>& range) {
             for (size_t layer_nr = range.begin(); layer_nr < range.end(); layer_nr++) {
@@ -1045,7 +1048,10 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                     }
                     // is cantilever if the farmost point is larger than 3mm away from base or some contour is totally floating
                     if (is_cantilever) {
-                        max_cantilever_dist = std::max(max_cantilever_dist, dist_max);
+                        {
+                            std::lock_guard<std::mutex> lock(cantilever_mutex);
+                            max_cantilever_dist = std::max(max_cantilever_dist, dist_max);
+                        }
                         layer->cantilevers.emplace_back(poly);
                         BOOST_LOG_TRIVIAL(debug) << "found a cantilever cluster. layer_nr=" << layer_nr << dist_max;
                         has_cantilever = true;
@@ -4234,7 +4240,7 @@ void TreeSupport::generate_contact_points()
         }
     }
 
-    int      nonempty_layers = 0;
+    std::atomic<int> nonempty_layers{0};
     tbb::concurrent_vector<Slic3r::Vec3f> all_nodes;
     tbb::parallel_for(tbb::blocked_range<size_t>(1, m_object->layers().size()), [&](const tbb::blocked_range<size_t>& range) {
         for (size_t layer_nr = range.begin(); layer_nr < range.end(); layer_nr++) {

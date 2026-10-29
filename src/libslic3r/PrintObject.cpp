@@ -4126,9 +4126,10 @@ void PrintObject::combine_infill()
             continue;
         // Limit the number of combined layers to the maximum height allowed by this regions' nozzle.
         //FIXME limit the layer height to max_layer_height
+        // nozzle_diameter is per extruder, the *_filament options are 1-based filament ids: map filament -> extruder.
         double nozzle_diameter = std::min(
-            this->print()->config().nozzle_diameter.get_at(region.config().sparse_infill_filament.value - 1),
-            this->print()->config().nozzle_diameter.get_at(region.config().solid_infill_filament.value - 1));
+            this->print()->config().nozzle_diameter.get_at(this->print()->get_extruder_id(region.config().sparse_infill_filament.value - 1)),
+            this->print()->config().nozzle_diameter.get_at(this->print()->get_extruder_id(region.config().solid_infill_filament.value - 1)));
         // define the combinations
         std::vector<size_t> combine(m_layers.size(), 0);
         {
