@@ -1702,6 +1702,7 @@ void SendToPrinterDialog::GetConnection()
     if (obj == nullptr) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " : obj is empty";
         m_connection_status = ConnectionStatus::NOT_START;
+        return;
     }
 
     int remote_proto = obj->get_file_remote();

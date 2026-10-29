@@ -2006,7 +2006,8 @@ void InputIpAddressDialog::on_send_retry()
         wxPostEvent(this, event);
         m_result = 0;
 
-        update_test_msg(_L("IP and Access Code Verified! You may close the window"), true);
+        // Runs on the send job's worker thread: update widgets on the main thread.
+        CallAfter([this]() { update_test_msg(_L("IP and Access Code Verified! You may close the window"), true); });
     });
 
     m_send_job->start();

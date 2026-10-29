@@ -37,6 +37,11 @@ void GUI::Job::update_percent_finish()
 
 void GUI::Job::show_error_info(wxString msg, int code, wxString description, wxString extra)
 {
+    // Called from the job worker thread; GTK widgets must only be touched on the main thread.
+    if (!wxThread::IsMain()) {
+        CallAfter([progress = m_progress, msg, code, description, extra]() { progress->show_error_info(msg, code, description, extra); });
+        return;
+    }
     m_progress->show_error_info(msg, code, description, extra);
 }
 

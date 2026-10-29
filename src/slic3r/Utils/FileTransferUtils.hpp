@@ -8,6 +8,7 @@
 #include <utility>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <boost/log/trivial.hpp>
 
 #ifdef _WIN32
@@ -134,6 +135,22 @@ struct FileTransferModule
     FileTransferModule &operator=(const FileTransferModule &) = delete;
 };
 
+// User pointer handed to plugin callbacks instead of `this`. The plugin may still invoke a callback
+// after release (it is refcounted and has no reliable unregister), so the owner detaches itself
+// under the lock on destruction and the guard is intentionally never freed.
+// ponytail: leaks one small guard per tunnel/job; free it if the plugin ever guarantees no late callbacks.
+struct FTCallbackGuard
+{
+    std::mutex mtx;
+    void                *owner = nullptr;
+
+    void detach()
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        owner = nullptr;
+    }
+};
+
 class FileTransferTunnel
 {
 public:
@@ -162,12 +179,14 @@ public:
 private:
     void reset() noexcept
     {
+        guard_->detach();
         if (h_) {
             m_->ft_tunnel_release(h_);
             h_ = nullptr;
         }
     }
 
+    FTCallbackGuard    *guard_ = new FTCallbackGuard{{}, this};
     int                 status_{};
     FileTransferModule *m_{};
     FT_TunnelHandle    *h_{};
@@ -213,6 +232,7 @@ public:
 private:
     void reset() noexcept
     {
+        guard_->detach();
         if (h_) {
             m_->ft_job_release(h_);
             h_ = nullptr;
@@ -221,6 +241,7 @@ private:
 
     void solve_result(ft_job_result result);
 
+    FTCallbackGuard       *guard_ = new FTCallbackGuard{{}, this};
     FileTransferModule    *m_{};
     FT_JobHandle          *h_{};
     ResultCb               result_cb_{};
