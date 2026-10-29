@@ -118,9 +118,13 @@ SlicingParameters SlicingParameters::create_from_config(
         params.gap_object_support = params.gap_support_object;
 
     if (!print_config.independent_support_layer_height) {
-        params.gap_raft_object = std::round(params.gap_raft_object / object_config.layer_height + EPSILON) * object_config.layer_height;
-        params.gap_object_support = std::round(params.gap_object_support / object_config.layer_height + EPSILON) * object_config.layer_height;
-        params.gap_support_object = std::round(params.gap_support_object / object_config.layer_height + EPSILON) * object_config.layer_height;
+        // Snap gaps to whole layers, but never round a non-zero gap down to 0 (supports would fuse to the part).
+        auto snap = [&object_config](double gap) {
+            return gap > 0 ? std::max(1., std::round(gap / object_config.layer_height + EPSILON)) * object_config.layer_height : 0.;
+        };
+        params.gap_raft_object    = snap(params.gap_raft_object);
+        params.gap_object_support = snap(params.gap_object_support);
+        params.gap_support_object = snap(params.gap_support_object);
     }
 
     if (params.base_raft_layers > 0) {

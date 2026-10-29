@@ -1376,7 +1376,7 @@ void PrintObject::slice_volumes(long long *region_split_ms_out, long long *mm_se
                         if (min_growth < 0.f || elfoot > 0.f) {
                             // Apply the negative XY compensation. (the ones that is <0)
                             ExPolygons trimming;
-                            static const float eps = float(scale_(m_config.slice_closing_radius.value) * 1.5);
+                            const float eps = float(scale_(m_config.slice_closing_radius.value) * 1.5);
                             if (elfoot > 0.f) {
                                 lslices_1st_layer = offset_ex(layer->merged(eps), -eps);
                                 trimming = Slic3r::elephant_foot_compensation(lslices_1st_layer,

@@ -155,6 +155,8 @@ static std::vector<std::pair<TreeSupportSettings, std::vector<size_t>>> group_me
     std::vector<std::pair<TreeSupportSettings, std::vector<size_t>>> grouped_meshes;
 
     //FIXME this is ugly, it does not belong here.
+    // The flag is static: reset it so a zero-gap object from an earlier slice doesn't leak into this one.
+    TreeSupportSettings::soluble = false;
     for (size_t object_id : print_object_ids) {
         const PrintObject       &print_object  = *print.get_object(object_id);
         const PrintObjectConfig &object_config = print_object.config();

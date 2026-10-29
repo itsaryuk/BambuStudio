@@ -6112,7 +6112,7 @@ static bool has_overhang_path_on_slope(const ExtrusionLoop &loop, double slope_l
         if (path.overhang_degree > 1)
             return true;
 
-        count_length += path.length();
+        count_length += unscale_(path.length()); // slope_length is in mm
     }
 
     return false;
@@ -6340,7 +6340,9 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
             }
         } else {
             paths.clear();
-            loop.clip_end(clip_length, &paths);
+            // Scarf was dropped (overhang on the slope): clip_length was computed as 0 for the scarf,
+            // so close the plain loop with the normal seam gap instead.
+            loop.clip_end(m_enable_loop_clipping ? seam_gap : 0, &paths);
             if (paths.empty()) return "";
         }
     }
@@ -8226,7 +8228,8 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
             else {
                 int old_filament_id_in_nozzle = m_processor.get_nozzle_status().get_filament_in_nozzle(nozzle_id);
                 wipe_volume = flush_matrix[old_filament_id_in_nozzle * number_of_extruders + new_filament_id];
-                wipe_volume *= m_config.flush_multiplier.get_at(new_extruder_id);
+                // Same multiplier choice as Print/ToolOrdering (Fast purge mode has its own multiplier).
+                wipe_volume *= (m_config.prime_volume_mode == PrimeVolumeMode::pvmFast ? m_config.flush_multiplier_fast : m_config.flush_multiplier).get_at(new_extruder_id);
             }
             return wipe_volume;
         };
@@ -8240,7 +8243,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
         }
         else {
             wipe_volume = flush_matrix[old_filament_id * number_of_extruders + new_filament_id];
-            wipe_volume *= m_config.flush_multiplier.get_at(new_extruder_id);  // if is multi_extruder only use the fist extruder matrix
+            wipe_volume *= (m_config.prime_volume_mode == PrimeVolumeMode::pvmFast ? m_config.flush_multiplier_fast : m_config.flush_multiplier).get_at(new_extruder_id);  // if is multi_extruder only use the fist extruder matrix
         }
         wipe_volume = std::max(0.f, wipe_volume-grab_purge_volume);
 

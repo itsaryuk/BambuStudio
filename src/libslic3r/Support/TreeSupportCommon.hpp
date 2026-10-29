@@ -281,8 +281,9 @@ struct TreeSupportSettings
           // config here, so this is a fixed 3.75mm (7.5mm diameter), not a user setting.
           bp_radius(mesh_group_settings.support_tree_bp_diameter / 2),
           bp_radius_increase_per_layer(std::min(tan(0.7) * layer_height, 0.5 * support_line_width)),
-          z_distance_bottom_layers(size_t(round(double(mesh_group_settings.support_bottom_distance) / double(layer_height)))),
-          z_distance_top_layers(size_t(round(double(mesh_group_settings.support_top_distance) / double(layer_height)))),
+          // A non-zero gap must stay at least one layer, otherwise thick layers round it to 0 and supports fuse to the part.
+          z_distance_bottom_layers(mesh_group_settings.support_bottom_distance > 0 ? std::max<size_t>(1, size_t(round(double(mesh_group_settings.support_bottom_distance) / double(layer_height)))) : 0),
+          z_distance_top_layers(mesh_group_settings.support_top_distance > 0 ? std::max<size_t>(1, size_t(round(double(mesh_group_settings.support_top_distance) / double(layer_height)))) : 0),
 //              support_infill_angles(mesh_group_settings.support_infill_angles),
           support_roof_angles(mesh_group_settings.support_roof_angles),
           roof_pattern(mesh_group_settings.support_roof_pattern),

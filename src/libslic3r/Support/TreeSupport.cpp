@@ -2317,7 +2317,7 @@ void TreeSupport::draw_circles()
     const PrintObjectConfig &config = m_object->config();
     const Print* print = m_object->print();
     bool has_brim = print->has_brim();
-    int bottom_gap_layers = round(m_slicing_params.gap_object_support / m_slicing_params.layer_height);
+    int bottom_gap_layers = m_slicing_params.gap_object_support > 0 ? std::max(1, int(round(m_slicing_params.gap_object_support / m_slicing_params.layer_height))) : 0;
     const coordf_t branch_radius = config.tree_support_branch_diameter.value / 2;
     const coordf_t branch_radius_scaled = scale_(branch_radius);
     bool on_buildplate_only = m_object_config->support_on_build_plate_only.value;
@@ -4277,7 +4277,7 @@ void TreeSupport::generate_contact_points()
                 return contact_node;
             };
 
-            auto extrudable_collision = offset_ex(layer->lower_layer->lslices_extrudable, m_ts_data->m_xy_distance);
+            auto extrudable_collision = offset_ex(layer->lower_layer->lslices_extrudable, scale_(m_ts_data->m_xy_distance));
             for (const auto& overhang_with_type : layer->loverhangs_with_type)  {
                 const auto &overhang_part = overhang_with_type.first;
                 const auto &overhang_type = overhang_with_type.second;

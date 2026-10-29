@@ -647,7 +647,8 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         double layer_height = config->opt_float("layer_height");
         double top_gap_raw = config->opt_float("support_top_z_distance");
         //double bottom_gap_raw = config->opt_float("support_bottom_z_distance");
-        double top_gap = std::round(top_gap_raw / layer_height) * layer_height;
+        // Never snap a non-zero gap to 0: that silently switches to soluble-style contact.
+        double top_gap = top_gap_raw > 0 ? std::max(1., std::round(top_gap_raw / layer_height)) * layer_height : 0.;
         //double bottom_gap = std::round(bottom_gap_raw / layer_height) * layer_height;
         if (top_gap != top_gap_raw /* || bottom_gap != bottom_gap_raw*/) {
             DynamicPrintConfig new_conf = *config;
