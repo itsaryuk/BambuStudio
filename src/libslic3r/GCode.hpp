@@ -423,8 +423,8 @@ private:
     std::string     change_layer(coordf_t print_z);
     std::string     extrude_entity(const ExtrusionEntity &entity, std::string description = "", double speed = -1.);
     std::string     extrude_loop(ExtrusionLoop loop, std::string description, double speed = -1.);
-    std::string     extrude_multi_path(ExtrusionMultiPath multipath, std::string description = "", double speed = -1.);
-    std::string     extrude_path(ExtrusionPath path, std::string description = "", double speed = -1.);
+    std::string     extrude_multi_path(const ExtrusionMultiPath &multipath, const std::string &description = "", double speed = -1.);
+    std::string     extrude_path(const ExtrusionPath &path, const std::string &description = "", double speed = -1.);
 
     //smooth speed function
     void            smooth_speed_discontinuity_area(ExtrusionPaths &paths);

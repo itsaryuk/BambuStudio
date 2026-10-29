@@ -4625,9 +4625,10 @@ std::string FacetsAnnotation::get_triangle_as_string(int triangle_idx) const
 
             assert(next_code >=0 && next_code <= 15);
             char digit = next_code < 10 ? next_code + '0' : (next_code-10)+'A';
-            out.insert(out.begin(), digit);
+            out.push_back(digit);
         }
     }
+    std::reverse(out.begin(), out.end());
     return out;
 }
 

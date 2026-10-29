@@ -3812,9 +3812,10 @@ void PrintObject::get_certain_layers(float start, float end, std::vector<LayerPt
 {
     BoundingBox temp;
     LayerPtrs   out_temp;
-    for (const auto &layer : layers()) {
-        if (layer->print_z < start) continue;
-
+    // Layers are ordered by print_z: jump to the start instead of walking up from layer 0 on every travel.
+    auto it = std::lower_bound(m_layers.begin(), m_layers.end(), start, [](const Layer *l, float z) { return l->print_z < z; });
+    for (; it != m_layers.end(); ++it) {
+        Layer *layer = *it;
         if (layer->print_z > end + EPSILON) break;
         temp.merge(layer->loverhangs_bbox);
         out_temp.emplace_back(layer);

@@ -2372,7 +2372,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     m_is_ironing_fan_on      = false;
     this->apply_print_config(print.config());
     m_config.apply(print.default_object_config());
-    m_config.apply(print.default_region_config());
+    static_cast<PrintRegionConfig&>(m_config) = print.default_region_config();
 
     //m_volumetric_speed = DoExport::autospeed_volumetric_limit(print);
     print.throw_if_canceled();
@@ -5372,8 +5372,8 @@ GCode::LayerResult GCode::process_layer(
                 // To control print speed of the 1st object layer printed over raft interface.
                 bool object_layer_over_raft = layer_to_print.object_layer && layer_to_print.object_layer->id() > 0 &&
                     instance_to_print.print_object.slicing_parameters().raft_layers() == layer_to_print.object_layer->id();
-                m_config.apply(print.default_region_config());
-                m_config.apply(instance_to_print.print_object.config(), true);
+                static_cast<PrintRegionConfig&>(m_config) = print.default_region_config();
+                static_cast<PrintObjectConfig&>(m_config) = instance_to_print.print_object.config();
                 m_layer = layer_to_print.layer();
                 m_object_layer_over_raft = object_layer_over_raft;
                 if (m_config.reduce_crossing_wall)
@@ -5601,8 +5601,8 @@ GCode::LayerResult GCode::process_layer(
 
                 // --- Shared instance preamble ---
                 const LayerToPrint &layer_to_print = layers[instance_to_print.layer_id];
-                m_config.apply(print.default_region_config());
-                m_config.apply(instance_to_print.print_object.config(), true);
+                static_cast<PrintRegionConfig&>(m_config) = print.default_region_config();
+                static_cast<PrintObjectConfig&>(m_config) = instance_to_print.print_object.config();
                 m_layer = layer_to_print.layer();
 
                 const auto &inst = instance_to_print.print_object.instances()[instance_to_print.instance_id];
@@ -6105,7 +6105,7 @@ static std::unique_ptr<EdgeGrid::Grid> calculate_layer_edge_grid(const Layer& la
 static bool has_overhang_path_on_slope(const ExtrusionLoop &loop, double slope_length)
 {
     double count_length = 0.0;
-    for (ExtrusionPath path : loop.paths) {
+    for (const ExtrusionPath &path : loop.paths) {
         if (count_length > slope_length)
             return false;
 
@@ -6420,17 +6420,17 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
     return gcode;
 }
 
-std::string GCode::extrude_multi_path(ExtrusionMultiPath multipath, std::string description, double speed)
+std::string GCode::extrude_multi_path(const ExtrusionMultiPath &multipath, const std::string &description, double speed)
 {
     // extrude along the path
     std::string gcode;
-    for (ExtrusionPath path : multipath.paths)
+    for (const ExtrusionPath &path : multipath.paths)
         gcode += this->_extrude(path, description, speed);
 
     // BBS
     if (m_wipe.enable && FILAMENT_CONFIG(wipe)) {
         m_wipe.path = Polyline();
-        for (ExtrusionPath &path : multipath.paths) {
+        for (const ExtrusionPath &path : multipath.paths) {
             //BBS: Don't need to save duplicated point into wipe path
             if (!m_wipe.path.empty() && !path.empty() &&
                 m_wipe.path.last_point() == path.first_point())
@@ -6463,7 +6463,7 @@ std::string GCode::extrude_entity(const ExtrusionEntity &entity, std::string des
     return "";
 }
 
-std::string GCode::extrude_path(ExtrusionPath path, std::string description, double speed)
+std::string GCode::extrude_path(const ExtrusionPath &path, const std::string &description, double speed)
 {
 //    description += ExtrusionEntity::role_to_string(path.role());
     bool flag = path.get_customize_flag() == CustomizeFlag::cfFloatingVerticalShell;
@@ -6500,7 +6500,7 @@ std::string GCode::extrude_perimeters(const Print &print, const std::vector<Obje
     std::string gcode;
     for (const ObjectByExtruder::Island::Region &region : by_region)
         if (! region.perimeters.empty()) {
-            m_config.apply(print.get_print_region(&region - &by_region.front()).config());
+            static_cast<PrintRegionConfig&>(m_config) = print.get_print_region(&region - &by_region.front()).config();
 
             // BBS: output merged node id
             int curr_node=0;
@@ -6532,7 +6532,7 @@ std::string GCode::extrude_infill(const Print &print, const std::vector<ObjectBy
                 if ((ee->role() == erIroning) == ironing)
                     extrusions.emplace_back(ee);
             if (! extrusions.empty()) {
-                m_config.apply(print.get_print_region(&region - &by_region.front()).config());
+                static_cast<PrintRegionConfig&>(m_config) = print.get_print_region(&region - &by_region.front()).config();
                 chain_and_reorder_extrusion_entities(extrusions, &m_last_pos);
                 for (const ExtrusionEntity *fill : extrusions) {
                     auto *eec = dynamic_cast<const ExtrusionEntityCollection*>(fill);
@@ -7870,15 +7870,18 @@ bool GCode::needs_retraction(const Polyline &travel, ExtrusionRole role, LiftTyp
                     is_layers_of_objects_sorted[idx] = true;
                 }
 
-                for (const auto& layer : layers_of_objects[idx]) {
-                    for (ExPolygon overhang : layer->loverhangs) {
-                        overhang.translate(instance_shift);
-                        BoundingBox bbox1 = get_extents(overhang);
+                // Move the travel into object coordinates once instead of copying and shifting every overhang.
+                Polyline local_travel = travel;
+                local_travel.translate(Point(-instance_shift.x(), -instance_shift.y()));
+                BoundingBox local_travel_bbox = travel_bbox;
+                local_travel_bbox.translate(-instance_shift.x(), -instance_shift.y());
 
-                        if (!bbox1.overlap(travel_bbox))
+                for (const auto& layer : layers_of_objects[idx]) {
+                    for (const ExPolygon &overhang : layer->loverhangs) {
+                        if (!get_extents(overhang).overlap(local_travel_bbox))
                             continue;
 
-                        if (intersection_pl(travel, overhang).empty())
+                        if (intersection_pl(local_travel, overhang).empty())
                             continue;
 
                         return true;

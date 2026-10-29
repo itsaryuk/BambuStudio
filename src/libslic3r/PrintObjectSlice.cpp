@@ -791,7 +791,7 @@ void groupingVolumesForBrim(PrintObject* object, LayerPtrs& layers, int firstLay
 {
     const auto           scaled_resolution = scaled<double>(object->print()->config().resolution.value);
     auto partsObjSliceByVolume = findPartVolumes(object->firstLayerObjSliceMod(), object->model_object()->volumes);
-    groupingVolumes(partsObjSliceByVolume, object->firstLayerObjGroupsMod(), scaled_resolution, firstLayerReplacedBy);
+    groupingVolumes(std::move(partsObjSliceByVolume), object->firstLayerObjGroupsMod(), scaled_resolution, firstLayerReplacedBy);
     applyNegtiveVolumes(object->model_object()->volumes, object->firstLayerObjSliceMod(), object->firstLayerObjGroupsMod(), scaled_resolution);
 
     // BBS: the actual first layer slices stored in layers are re-sorted by volume group and will be used to generate brim

@@ -250,7 +250,7 @@ wxPoint OG_CustomCtrl::get_pos(const Line& line, Field* field_in/* = nullptr*/)
                     correct_line_height_for_sizer(ctrl_line.height, field->getSizer());
 
                 if (!opt_group->option_label_at_right) { // BBS: position option label at right
-                    ConfigOptionDef option = opt.opt;
+                    const ConfigOptionDef &option = opt.opt;
                     // add label if any
                     if (is_multioption_line && !option.label.empty()) {
                         //!            To correct translation by context have to use wxGETTEXT_IN_CONTEXT macro from wxWidget 3.1.1
@@ -379,10 +379,17 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
     // BBS
 
     bool suppress_hyperlinks = false;
+    bool focus_changed       = false;
+
+    // Update every line up front: the search loop below breaks early and would leave a stale focus behind.
+    for (CtrlLine& line : ctrl_lines) {
+        const bool focused = line.is_visible && is_point_in_rect(pos, line.rect_label);
+        focus_changed |= focused != line.is_focused;
+        line.is_focused = focused;
+    }
 
     for (CtrlLine& line : ctrl_lines) {
         if (!line.is_visible) continue;
-        line.is_focused = is_point_in_rect(pos, line.rect_label);
         if (line.is_focused) {
             if (!suppress_hyperlinks && !line.og_line.label_path.empty())
                 tooltip = OptionsGroup::get_url(line.og_line.label_path) + "\n\n";
@@ -447,8 +454,11 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
         this->SetToolTip(tooltip);
     // BBS
 
-    Refresh();
-    Update();
+    // Painting only depends on is_focused; skip full repaints on plain mouse moves.
+    if (focus_changed) {
+        Refresh();
+        Update();
+    }
     event.Skip();
 }
 
@@ -1097,7 +1107,7 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
     bool is_multioption_line = option_set.size() > 1;
     for (const Option& opt : option_set) {
         field = ctrl->opt_group->get_field(opt.opt_id);
-        ConfigOptionDef option = opt.opt;
+        const ConfigOptionDef &option = opt.opt;
         if (ctrl->opt_group->option_label_at_right)
             draw_buttons(field, bmp_rect_id++);
         if (ctrl->opt_group->option_label_at_right) // BBS
@@ -1129,8 +1139,9 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
         // BBS: new layout
         wxCoord offset = 0;
         if (!field->combine_side_text() && (!option.sidetext.empty() || ctrl->opt_group->sidetext_width > 0)) {
-            wxCoord h_pos2 = h_pos + dc.GetTextExtent(_(option.sidetext)).x;
-            h_pos = draw_text(dc, wxPoint(h_pos, v_pos), _(option.sidetext), nullptr, ctrl->opt_group->sidetext_width * ctrl->m_em_unit);
+            const wxString sidetext = _(option.sidetext);
+            wxCoord h_pos2 = h_pos + dc.GetTextExtent(sidetext).x;
+            h_pos = draw_text(dc, wxPoint(h_pos, v_pos), sidetext, nullptr, ctrl->opt_group->sidetext_width * ctrl->m_em_unit);
             offset = h_pos - h_pos2;
         }
         // BBS: new layout

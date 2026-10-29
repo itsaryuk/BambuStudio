@@ -9600,16 +9600,23 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
     if (m_sel_plate_toolbar.show_stats_item) {
         all_plates_stats_item->percent = 0.0f;
 
+        // Each call walks every plate's objects and volumes, so compute once per frame.
+        const std::vector<PartPlate*> nonempty_plates = plate_list.get_nonempty_plate_list();
+        std::vector<const GCodeProcessorResult*> nonempty_slice_results;
+        nonempty_slice_results.reserve(nonempty_plates.size());
+        for (auto plate : nonempty_plates)
+            nonempty_slice_results.push_back(plate->get_slice_result());
+
         size_t sliced_plates_cnt = 0;
-        for (auto plate : plate_list.get_nonempty_plate_list()) {
+        for (auto plate : nonempty_plates) {
             if (plate->is_slice_result_valid() && plate->is_slice_result_ready_for_print())
                 sliced_plates_cnt++;
         }
-        all_plates_stats_item->percent = (float)(sliced_plates_cnt) / (float)(plate_list.get_nonempty_plate_list().size()) * 100.0f;
+        all_plates_stats_item->percent = (float)(sliced_plates_cnt) / (float)(nonempty_plates.size()) * 100.0f;
 
         if (all_plates_stats_item->percent == 0.0f)
             all_plates_stats_item->slice_state = IMToolbarItem::SliceState::UNSLICED;
-        else if (sliced_plates_cnt == plate_list.get_nonempty_plate_list().size())
+        else if (sliced_plates_cnt == nonempty_plates.size())
             all_plates_stats_item->slice_state = IMToolbarItem::SliceState::SLICED;
         else if (all_plates_stats_item->percent < 100.0f)
             all_plates_stats_item->slice_state = IMToolbarItem::SliceState::SLICING;
@@ -9624,19 +9631,19 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
 
         // Changing parameters does not invalid all plates, need extra logic to validate
         bool gcode_result_valid = true;
-        for (auto gcode_result : plate_list.get_nonempty_plates_slice_results()) {
+        for (auto gcode_result : nonempty_slice_results) {
             if (gcode_result->moves.size() == 0) {
                 gcode_result_valid = false;
             }
         }
         auto& t_gcode_viewer = get_gcode_viewer();
         if (all_plates_stats_item->selected && all_plates_stats_item->slice_state == IMToolbarItem::SliceState::SLICED && gcode_result_valid) {
-            t_gcode_viewer.render_all_plates_stats(plate_list.get_nonempty_plates_slice_results());
+            t_gcode_viewer.render_all_plates_stats(nonempty_slice_results);
             m_can_show_navigator = false;
             m_render_preview = false;
         }
         else{
-            t_gcode_viewer.render_all_plates_stats(plate_list.get_nonempty_plates_slice_results(), false);
+            t_gcode_viewer.render_all_plates_stats(nonempty_slice_results, false);
             m_render_preview = true;
         }
     }else

@@ -589,7 +589,7 @@ std::vector<size_t> Print::layers_sorted_for_object(float start, float end, std:
         object->get_certain_layers(start, end, layers_of_objects, boundingBox_for_objects);
     }
     std::sort(idx_of_object_sorted.begin(), idx_of_object_sorted.end(),
-              [boundingBox_for_objects](auto left, auto right) { return boundingBox_for_objects[left].area() > boundingBox_for_objects[right].area(); });
+              [&boundingBox_for_objects](auto left, auto right) { return boundingBox_for_objects[left].area() > boundingBox_for_objects[right].area(); });
 
     objects_instances_shift.clear();
     objects_instances_shift.reserve(m_objects.size());

@@ -5469,7 +5469,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 its.vertices.assign(sub_object->geometry.vertices.begin(), sub_object->geometry.vertices.end());
 
                 // BBS
-                for (const std::string prop_str : sub_object->geometry.face_properties) {
+                for (const std::string &prop_str :sub_object->geometry.face_properties) {
                     FaceProperty face_prop;
                     face_prop.from_string(prop_str);
                     its.properties.push_back(face_prop);
@@ -5664,7 +5664,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 its.vertices.assign(geometry.vertices.begin() + min_id, geometry.vertices.begin() + max_id + 1);
 
                 // BBS
-                for (const std::string prop_str : geometry.face_properties) {
+                for (const std::string &prop_str :geometry.face_properties) {
                     FaceProperty face_prop;
                     face_prop.from_string(prop_str);
                     its.properties.push_back(face_prop);

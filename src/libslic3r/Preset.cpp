@@ -974,17 +974,10 @@ bool Preset::is_bbl_vendor_preset(PresetBundle *preset_bundle)
         }
         auto printer_model_opt = config->opt<ConfigOptionString>("printer_model");
         if (printer_model_opt) {
-            std::string vendor_name;
-            for (auto vendor_profile : preset_bundle->vendors) {
-                for (auto vendor_model : vendor_profile.second.models)
+            for (const auto &vendor_profile : preset_bundle->vendors)
+                for (const auto &vendor_model : vendor_profile.second.models)
                     if (vendor_model.name == printer_model_opt->value)
-                    {
-                        vendor_name = vendor_profile.first;
-                        break;
-                    }
-            }
-            if (!vendor_name.empty())
-                is_bbl_vendor_preset = (vendor_name.compare("BBL") == 0);
+                        return vendor_profile.first == "BBL";
         }
     }
     return is_bbl_vendor_preset;
@@ -2930,10 +2923,9 @@ const std::string& PresetCollection::get_suffix_modified() {
 // If a preset is not found by its name, null is returned.
 Preset* PresetCollection::find_preset(const std::string &name, bool first_visible_if_not_found, bool real)
 {
-    Preset key(m_type, name, false);
     auto it = this->find_preset_internal(name);
     // Ensure that a temporary copy is returned if the preset found is currently selected.
-    return (it != m_presets.end() && it->name == key.name) ? &this->preset(it - m_presets.begin(), real) :
+    return (it != m_presets.end() && it->name == name) ? &this->preset(it - m_presets.begin(), real) :
         first_visible_if_not_found ? &this->first_visible() : nullptr;
 }
 

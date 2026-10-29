@@ -1276,7 +1276,7 @@ void PresetBundle::remove_user_presets_directory(const std::string preset_folder
 
 void PresetBundle::update_system_preset_setting_ids(std::map<std::string, std::map<std::string, std::string>>& system_presets)
 {
-    for (auto iterator: system_presets)
+    for (auto& iterator: system_presets)
     {
         std::string name = iterator.first;
         std::map<std::string, std::string>& value_map = iterator.second;
