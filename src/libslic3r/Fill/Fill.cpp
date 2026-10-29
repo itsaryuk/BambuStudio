@@ -181,6 +181,38 @@ struct SurfaceFill {
 };
 
 // BBS: used to judge whether the internal solid infill area is narrow
+// Solid line fills place their line ends 0.05*spacing from the area edge (FillRectilinear's
+// INFILL_OVERLAP_OVER_SPACING), so the ends bite into the walls. Where the edge borders another solid
+// fill area instead of a wall, both sides bite into each other and leave a ridge on the seam.
+// Pull such edges back by the remaining 0.45*spacing so the line ends sit half a spacing from the seam.
+static void pull_back_solid_fill_seams(std::vector<SurfaceFill> &surface_fills)
+{
+    auto is_solid_line_fill = [](const SurfaceFill &fill) {
+        const InfillPattern p = fill.params.pattern;
+        // density is in percent here. Bridges keep their edges: they are expanded on purpose to anchor.
+        return fill.surface.is_solid() && !fill.surface.is_bridge() && fill.params.density >= 99.99f &&
+               (p == ipRectilinear || p == ipMonotonic || p == ipAlignedRectilinear);
+    };
+
+    std::vector<Polygons> original(surface_fills.size());
+    for (size_t i = 0; i < surface_fills.size(); ++i)
+        if (surface_fills[i].surface.is_solid())
+            original[i] = to_polygons(surface_fills[i].expolygons);
+
+    for (size_t i = 0; i < surface_fills.size(); ++i) {
+        SurfaceFill &fill = surface_fills[i];
+        if (fill.expolygons.empty() || !is_solid_line_fill(fill))
+            continue;
+        Polygons others;
+        for (size_t j = 0; j < surface_fills.size(); ++j)
+            if (j != i)
+                append(others, original[j]);
+        if (others.empty())
+            continue;
+        fill.expolygons = diff_ex(fill.expolygons, expand(others, float(scale_(0.45 * fill.params.spacing))));
+    }
+}
+
 static bool is_narrow_infill_area(const ExPolygon& expolygon)
 {
 	ExPolygons offsets = offset_ex(expolygon, -scale_(NARROW_INFILL_AREA_THRESHOLD));
@@ -648,6 +680,7 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
     LockRegionParam lock_param;
     set_outlook_range(lock_param);
     std::vector<SurfaceFill>     surface_fills = group_fills(*this, lock_param);
+    pull_back_solid_fill_seams(surface_fills);
     const Slic3r::BoundingBox bbox 			= this->object()->bounding_box();
     const auto                resolution 	= this->object()->print()->config().resolution.value;
 #ifdef SLIC3R_DEBUG_SLICE_PROCESSING
@@ -657,6 +690,12 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
 	}
 #endif /* SLIC3R_DEBUG_SLICE_PROCESSING */
     for (SurfaceFill &surface_fill : surface_fills) {
+        // Plain rectilinear restarts from the leftmost unprinted line after a hole splits the columns, so a line
+        // of the second chain lands between two already printed lines and leaves a ridge on top surfaces.
+        // Same line geometry printed in monotonic order (FillMonotonic, which also keeps that order unsorted).
+        if (surface_fill.params.pattern == ipRectilinear && surface_fill.params.extrusion_role == erTopSolidInfill &&
+            surface_fill.params.density >= 99.99f)
+            surface_fill.params.pattern = ipMonotonic;
         // Create the filler object.
         std::unique_ptr<Fill> f = std::unique_ptr<Fill>(Fill::new_from_type(surface_fill.params.pattern));
         f->set_bounding_box(bbox);
