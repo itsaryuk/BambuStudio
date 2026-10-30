@@ -189,9 +189,9 @@ ThermalCalibrationGuideDialog::ThermalCalibrationGuideDialog(wxWindow* parent, i
     else
         para(_L("Slow down layer time (Filament → Cooling) must be 0 when slicing the tower, or the slicer throttles the small layers and hides the heat build-up. Calibrate refuses a tower sliced with it on."), true);
     para(_L("2. Read it"), true);
-    para(_L("The lower part has crisp, even layer lines. Higher up the surface turns rough, pebbled or glossy, and near the tip the layers sag or the cone bends. The rough band is where each layer was laid on material that was still soft. The bent tip is the same effect at its extreme and is not the number to use."));
+    para(_L("The lower part has crisp, even layer lines. Higher up the lines turn wavy and ridged, the surface loses its gloss or gets rough and pebbled, and near the tip the layers slump into a blob or the cone bends. That band is where each layer was laid on material that was still soft. The blob at the tip is the same effect at its extreme and is not the number to use."));
     para(_L("3. Measure it"), true);
-    para(_L("With a caliper, measure from the bottom of the cone (not the brim) to the lowest height where the surface is rough all the way around, as marked by the line in the photo. If the change is gradual, take the height where it is clearly rough, not the first isolated bump."));
+    para(_L("With a caliper, measure from the bottom of the cone (not the brim) to the lowest height where the ridges or roughness go all the way around, as marked by the line in the photo. If the change is gradual, take the height where it is clearly visible, not the first isolated bump."));
     para(_L("4. Enter it"), true);
     para(_L("With the sliced tower still open, press the Thermal Optimization button, choose Calibrate, enter that height and press Start. The comfort window is then stored for this filament type and used automatically. Running the calibration again overwrites it."));
     body->Add(text, 1, wxEXPAND);
