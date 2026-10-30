@@ -349,6 +349,13 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
     runs(true);
     runs(false);
 
+    {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "Environment: bed %.0f °C, chamber air %s, bed-warmed air fades over %.0f mm.", params.bed_temp,
+                      params.chamber_temp > 0.f ? (std::to_string(int(std::lround(params.chamber_temp))) + " °C").c_str() : "at room temperature",
+                      params.bed_air_decay_height);
+        rep.assumptions.emplace_back(buf);
+    }
     bool warp = false;
     for (size_t slot = 0; slot < used_slot.size(); ++slot) {
         if (!used_slot[slot]) continue;

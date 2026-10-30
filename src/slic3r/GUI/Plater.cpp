@@ -15838,8 +15838,30 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
         const auto* opt = cfg.option<ConfigOptionFloats>(key);
         return opt != nullptr && !opt->values.empty() ? float(opt->get_at(f)) : fallback;
     };
-    const float bed_temp     = float(int_at(get_bed_temp_key(partplate_list.get_curr_plate()->get_bed_type(true)), 0, 60));
-    const float chamber_temp = float(int_at("chamber_temperatures", 0, 0));
+    auto bool_at = [&](const char* key, size_t f) {
+        const auto* opt = cfg.option<ConfigOptionBools>(key);
+        return opt != nullptr && !opt->values.empty() && opt->get_at(f);
+    };
+    auto printer_bool = [&](const char* key) {
+        const auto* opt = cfg.option<ConfigOptionBool>(key);
+        return opt != nullptr && opt->value;
+    };
+    const float bed_temp = float(int_at(get_bed_temp_key(partplate_list.get_curr_plate()->get_bed_type(true)), 0, 60));
+    // Chamber, mirroring what the slicer emits: the filament's chamber temperature counts only on printers with chamber control.
+    float chamber_temp = 0.f, decay_height = ThermalModelParams().bed_air_decay_height;
+    bool  exhaust      = false;
+    for (const auto& fu : g_result->used_filaments) {
+        const size_t f = size_t(std::max(0, fu.filament_id));
+        if (printer_bool("support_chamber_temp_control")) chamber_temp = std::max(chamber_temp, float(int_at("chamber_temperatures", f, 0)));
+        exhaust |= printer_bool("support_air_filtration") && bool_at("activate_air_filtration", f) && int_at("during_print_exhaust_fan_speed", f, 0) > 0;
+    }
+    const auto* structure = cfg.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
+    if (chamber_temp <= 0.f && structure != nullptr && structure->value == psCoreXY) {
+        // ponytail: enclosed but unheated (X1/P1 class): the bed warms the air to roughly a quarter of its excess
+        // over room temperature, halved when the exhaust fan runs; the warm layer also reaches higher up.
+        chamber_temp = 25.f + 0.25f * std::max(bed_temp - 25.f, 0.f) * (exhaust ? 0.5f : 1.f);
+        decay_height = 60.f;
+    }
     ThermalMaterials params;
     for (size_t f = 0; f < n_fil; ++f) {
         const std::string type          = types != nullptr && f < types->values.size() ? types->values[f] : std::string();
@@ -15847,6 +15869,7 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
         ThermalModelParams p = ThermalModelParams::for_material(type, vitrification);
         p.bed_temp           = bed_temp;
         p.chamber_temp       = chamber_temp;
+        p.bed_air_decay_height = decay_height;
         p.max_volumetric     = float_at("filament_max_volumetric_speed", f, -1.f);
         p.min_speed          = float_at("slow_down_min_speed", f, -1.f);
         params.push_back(p);

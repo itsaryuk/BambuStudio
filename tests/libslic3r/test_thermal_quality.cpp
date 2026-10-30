@@ -253,9 +253,10 @@ TEST_CASE("Thermal quality: material classes, per-filament models, profile floor
         if (s.result.moves[i].extruder_id == 1 && s.move_layers[i] == 5) { col_move = i; break; }
     REQUIRE(col_move > 0);
     REQUIRE(two.moves[col_move].mean < one.moves[col_move].mean); // ABS wants a 100 °C substrate: the warm column reads colder
-    REQUIRE(two.assumptions.size() == 2);
-    REQUIRE(two.assumptions[1].find("ABS") != std::string::npos);
-    REQUIRE(two.assumptions[0].find("PLA") != std::string::npos);
+    REQUIRE(two.assumptions.size() == 3); // environment, then one line per filament slot
+    REQUIRE(two.assumptions[0].find("Environment") != std::string::npos);
+    REQUIRE(two.assumptions[1].find("PLA") != std::string::npos);
+    REQUIRE(two.assumptions[2].find("ABS") != std::string::npos);
     bool warp_advice = false;
     for (const auto& f : two.fixes) warp_advice |= f.second.find("enclosure") != std::string::npos || f.second.find("warps") != std::string::npos;
     if (two.direction != "NONE") REQUIRE(warp_advice);

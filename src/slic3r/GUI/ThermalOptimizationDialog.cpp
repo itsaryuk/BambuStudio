@@ -73,7 +73,7 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
         if (!materials.empty()) materials += ", ";
         materials += wxString::Format("%s (%.0f ± %.0f °C)", wxString::FromUTF8(params[i].material), params[i].ideal_substrate_temp, params[i].window_half_width);
     }
-    auto* mats = new Label(this, Label::Body_12, wxString::Format(_L("Material model from the filament presets: %s. Values below are prefilled from the current presets."), materials), LB_AUTO_WRAP);
+    auto* mats = new Label(this, Label::Body_12, wxString::Format(_L("Material model from the filament presets: %s. Chamber air is prefilled from the printer and filament presets (heated chamber, or the bed warming an enclosure)."), materials), LB_AUTO_WRAP);
     mats->SetMinSize(wxSize(FromDIP(440), -1));
     mats->Wrap(FromDIP(440));
     sizer->Add(mats, 0, wxLEFT | wxRIGHT, pad);
@@ -86,7 +86,7 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     };
     m_chamber = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0, 120,
                                int(std::max(0.f, params.empty() ? 0.f : params.front().chamber_temp)));
-    row(_L("Chamber temperature (°C, 0 = unheated)"), m_chamber);
+    row(_L("Chamber air temperature (°C, 0 = open frame)"), m_chamber);
     m_speed_up = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0, 100,
                                 int(std::lround((options.max_speed_factor - 1.f) * 100.f)));
     row(_L("Maximum speed-up on cold layers (%)"), m_speed_up);
