@@ -1557,6 +1557,7 @@ void GCodeProcessorResult::reset() {
     //BBS: add toolpath_outside
     toolpath_outside = false;
     is_helio_gcode   = false;
+    is_local_thermal = false;
     //BBS: add label_object_enabled
     label_object_enabled = false;
     support_material_on_wipe_tower = false;
@@ -2521,6 +2522,7 @@ void GCodeProcessor::reset()
     m_extrusion_role = erNone;
 
     m_is_helio_gcode   = false;
+    m_is_local_thermal = false;
     m_filament_id = {static_cast<unsigned char>(-1),static_cast<unsigned char>(-1)};
     m_last_filament_id = {static_cast<unsigned char>(-1),static_cast<unsigned char>(-1) };
     m_extruder_id = static_cast<unsigned char>(-1);
@@ -2670,6 +2672,7 @@ void GCodeProcessor::process_file(const std::string& filename, std::function<voi
     }, m_result.lines_ends);
     m_result.update_imgui_flag = true;
     m_result.is_helio_gcode = m_is_helio_gcode;
+    m_result.is_local_thermal = m_is_local_thermal;
     // Don't post-process the G-code to update time stamps.
     this->finalize(false);
 }
@@ -3036,6 +3039,8 @@ void GCodeProcessor::process_helioadditive_comment(const GCodeReader::GCodeLine 
 {
     const std::string &comment = line.raw();
     m_thermal_index            = parse_helioadditive_comment(comment, m_is_helio_gcode);
+    if (boost::algorithm::contains(comment, ";thermal="))
+        m_is_local_thermal = true;
 }
 
 #if __has_include(<charconv>)

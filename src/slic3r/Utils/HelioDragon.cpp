@@ -1,4 +1,5 @@
 #include "HelioDragon.hpp"
+#include <cmath>
 
 #include <string>
 #include <wx/string.h>
@@ -22,6 +23,7 @@
 #include "../GUI/Plater.hpp"
 #include "../GUI/NotificationManager.hpp"
 #include "../GUI/HelioReleaseNote.hpp"
+#include "../GUI/ThermalOptimizationDialog.hpp"
 #include "wx/app.h"
 #include "cstdio"
 #include <algorithm>
@@ -2464,13 +2466,18 @@ void HelioBackgroundProcess::helio_threaded_process_start(std::mutex&           
         !was_canceled()) {
         wxPostEvent(GUI::wxGetApp().plater(), HelioActionEvent(GUI::EVT_HELIO_PROCESSING_STARTED, 0, helio_worker_generation));
 
-        Slic3r::PrintBase::SlicingStatus status = Slic3r::PrintBase::SlicingStatus(0.0, "Helio: Process Started");
+        Slic3r::PrintBase::SlicingStatus status = Slic3r::PrintBase::SlicingStatus(0.0, local_engine ? _u8L("Thermal Optimization: started") : "Helio: Process Started");
         status.is_helio = true;
         Slic3r::SlicingStatusEvent*      evt    = new Slic3r::SlicingStatusEvent(GUI::EVT_SLICING_UPDATE, 0, status);
         evt->generation = helio_worker_generation;
         wxQueueEvent(GUI::wxGetApp().plater(), evt);
 
         BOOST_LOG_TRIVIAL(debug) << "Helio process started";
+
+        if (local_engine) {
+            run_local_engine();
+            return;
+        }
 
         /*check api url*/
         if (helio_api_url.empty()) {
@@ -2933,6 +2940,85 @@ void HelioBackgroundProcess::create_optimization_step(HelioQuery::CreateGCodeRes
         wxQueueEvent(GUI::wxGetApp().plater(), evt);
     }
 }
+// Built-in Thermal Optimization: simulate (and optionally rebalance) the sliced G-code without any network.
+void HelioBackgroundProcess::run_local_engine()
+{
+    auto progress = [this](int percent, const std::string& text) {
+        Slic3r::PrintBase::SlicingStatus status(percent, text);
+        status.is_helio = true;
+        auto* evt       = new Slic3r::SlicingStatusEvent(GUI::EVT_SLICING_UPDATE, 0, status);
+        evt->generation = helio_worker_generation;
+        wxQueueEvent(GUI::wxGetApp().plater(), evt);
+    };
+    auto fail = [this](const std::string& message) {
+        set_state(STATE_CANCELED);
+        auto* evt = new Slic3r::HelioCompletionEvent(GUI::EVT_HELIO_PROCESSING_COMPLETED, 0, "", "", false, message);
+        evt->generation = helio_worker_generation;
+        wxQueueEvent(GUI::wxGetApp().plater(), evt);
+    };
+
+    if (m_gcode_result == nullptr) {
+        fail(_u8L("Thermal Optimization: no sliced G-code available"));
+        return;
+    }
+    const std::string filename = m_gcode_result->filename;
+
+    progress(10, _u8L("Thermal Optimization: reading G-code"));
+    ThermalGCodeText text;
+    if (!ThermalGCodeText::load(filename, text)) {
+        fail(_u8L("Thermal Optimization: could not read the sliced G-code"));
+        return;
+    }
+    if (was_canceled()) return;
+
+    const std::vector<int> move_layers = ThermalQuality::layers_of_moves(*m_gcode_result, text.line_layers);
+    progress(30, _u8L("Thermal Optimization: simulating layer temperatures"));
+    ThermalReport report = ThermalQuality::simulate(*m_gcode_result, move_layers, local_params);
+    if (was_canceled()) return;
+
+    HelioQuery::RatingData rating;
+    rating.action = action;
+    std::vector<float> factors;
+    std::string        out_path;
+    if (action == 1) {
+        progress(55, _u8L("Thermal Optimization: rebalancing layer speeds"));
+        factors             = ThermalQuality::optimize(*m_gcode_result, move_layers, local_params, local_options);
+        ThermalReport after = ThermalQuality::simulate(*m_gcode_result, move_layers, local_params, &factors, &local_options);
+        rating.qualityMeanImprovement = ThermalQuality::quality_grade(std::abs(report.mean), std::abs(after.mean));
+        rating.qualityStdImprovement  = ThermalQuality::quality_grade(report.stddev, after.stddev);
+        report   = std::move(after);
+        out_path = create_path_for_optimization_gcode(filename);
+    } else {
+        progress(55, _u8L("Thermal Optimization: estimating possible speed-up"));
+        const std::vector<float> f    = ThermalQuality::optimize(*m_gcode_result, move_layers, local_params, local_options);
+        report.suggested_speed_factor = ThermalQuality::time_factor(*m_gcode_result, move_layers, f, local_options);
+        out_path                      = create_path_for_simulated_gcode(filename);
+    }
+    if (was_canceled()) return;
+
+    progress(80, _u8L("Thermal Optimization: writing G-code"));
+    const bool optimized = action == 1;
+    if (!ThermalQuality::write_gcode(text, out_path, *m_gcode_result, move_layers, report, optimized ? &factors : nullptr,
+                                     optimized ? &local_options : nullptr)) {
+        fail(_u8L("Thermal Optimization: could not write the result G-code"));
+        return;
+    }
+    if (was_canceled() || !is_action_current(helio_worker_generation)) return;
+
+    if (action == 0) {
+        const int  original_time = static_cast<int>(m_gcode_result->print_statistics.modes[0].time);
+        const auto roles_times   = m_gcode_result->print_statistics.modes[0].roles_times;
+        GUI::wxGetApp().plater()->CallAfter([process = this, generation = helio_worker_generation, report, original_time, roles_times]() {
+            if (!process->is_action_current(generation)) return;
+            GUI::ThermalOptimizationResultDialog dlg(nullptr, report, original_time, roles_times);
+            dlg.ShowModal();
+        });
+    }
+
+    progress(95, _u8L("Thermal Optimization: loading preview"));
+    load_helio_file_to_viwer(out_path, filename, rating);
+}
+
 void HelioBackgroundProcess::save_downloaded_gcode_and_load_preview(std::string                                file_download_url,
                                                                     std::string                                helio_gcode_path,
                                                                     std::string                                tmp_path,

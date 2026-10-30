@@ -185,6 +185,8 @@ set(lisbslic3r_sources
     GCode/GCodeEditor.hpp
     GCode/PostProcessor.cpp
     GCode/PostProcessor.hpp
+    GCode/ThermalQuality.cpp
+    GCode/ThermalQuality.hpp
 #    GCode/PressureEqualizer.cpp
 #    GCode/PressureEqualizer.hpp
     GCode/PrintExtents.cpp

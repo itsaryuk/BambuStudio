@@ -2561,9 +2561,10 @@ void ExpandCenterDialog::on_uninstall(const wxMouseEvent& evt)
         wxGetApp().getAgent()->track_event("helio_state", j.dump());
     }
     
-    // Hide the Helio button in main window
+    // The top bar button stays for the built-in Thermal Optimization; only the icon changes.
     if (wxGetApp().mainframe->expand_program_holder) {
-        wxGetApp().mainframe->expand_program_holder->ShowExpandButton(wxGetApp().mainframe->expand_helio_id, false);
+        wxGetApp().mainframe->expand_program_holder->updateExpandButtonBitmap(wxGetApp().mainframe->expand_helio_id, "thermal_icon_topbar");
+        wxGetApp().mainframe->expand_program_holder->SetExpandButtonRichTooltip(wxGetApp().mainframe->expand_helio_id, "monitor_speed", _L("Thermal Optimization: check layer temperatures and rebalance speeds, free and offline."));
         wxGetApp().mainframe->Layout();
     }
     

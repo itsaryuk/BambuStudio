@@ -46,3 +46,10 @@ endif()
 
 # catch_discover_tests(${_TEST_NAME}_tests TEST_PREFIX "${_TEST_NAME}: ")
 add_test(${_TEST_NAME}_tests ${_TEST_NAME}_tests ${CATCH_EXTRA_ARGS})
+
+# Thermal Optimization tests build on their own so they stay runnable while other libslic3r tests are out of date.
+add_executable(thermal_quality_tests ${_TEST_NAME}_tests.cpp test_thermal_quality.cpp)
+# libslic3r references Http/BBL_Encrypt from libslic3r_gui, so link the GUI library like the app does.
+target_link_libraries(thermal_quality_tests test_common libslic3r libslic3r_gui)
+set_property(TARGET thermal_quality_tests PROPERTY FOLDER "tests")
+add_test(thermal_quality_tests thermal_quality_tests ${CATCH_EXTRA_ARGS})

@@ -203,6 +203,7 @@
 #include "ImageMessageDialog.hpp"
 
 #include "HelioReleaseNote.hpp"
+#include "ThermalOptimizationDialog.hpp"
 
 using boost::optional;
 namespace fs = boost::filesystem;
@@ -7289,6 +7290,7 @@ public:
     void on_helio_processing_start(HelioActionEvent &);
     void on_helio_input_dlg(SimpleEvent &);
     void on_helio_process(const PartPlate* expected_plate);
+    void on_thermal_optimization(const PartPlate* expected_plate);
     void on_action_publish(wxCommandEvent &evt);
     bool confirm_send_only_gcode();
     void on_action_print_plate(SimpleEvent&);
@@ -15623,7 +15625,7 @@ void Plater::priv::on_helio_processing_complete(HelioCompletionEvent &a)
             }
 
             // Store optimization result to current plate for "View Summary" feature
-            if (plate) {
+            if (plate && !helio_background_process.local_engine) {
                 HelioPlateResult helio_result;
                 helio_result.action = 1;  // Optimization
                 helio_result.original_print_time_seconds = time_origin_value;
@@ -15634,8 +15636,13 @@ void Plater::priv::on_helio_processing_complete(HelioCompletionEvent &a)
                 plate->set_helio_result(helio_result);
             }
 
-            HelioRatingDialog dlg(nullptr, time_origin_value, time_optimized_value, a.quality_mean_improvement, a.quality_std_improvement);
-            dlg.ShowModal();
+            if (helio_background_process.local_engine) {
+                ThermalOptimizationResultDialog dlg(nullptr, int(time_origin_value), int(time_optimized_value), a.quality_mean_improvement, a.quality_std_improvement);
+                dlg.ShowModal();
+            } else {
+                HelioRatingDialog dlg(nullptr, time_origin_value, time_optimized_value, a.quality_mean_improvement, a.quality_std_improvement);
+                dlg.ShowModal();
+            }
         }
     } else {
         notification_manager->push_helio_error_notification(a.error_message);
@@ -15649,7 +15656,7 @@ void Plater::priv::on_helio_processing_start(HelioActionEvent &a)
     }
     notification_manager->close_notification_of_type(GUI::NotificationType::SignDetected);
     notification_manager->close_notification_of_type(GUI::NotificationType::ExportFinished);
-    notification_manager->set_slicing_progress_began(true);
+    notification_manager->set_slicing_progress_began(!helio_background_process.local_engine);
     notification_manager->update_slicing_notif_dailytips(true);
 }
 
@@ -15801,6 +15808,62 @@ void Plater::priv::on_helio_process(const PartPlate* expected_plate)
     }
 }
 
+// Built-in Thermal Optimization: local layer-temperature model, no account or network.
+void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
+{
+    auto launch_allowed = [this, expected_plate]() {
+        const PartPlate* current_plate = partplate_list.get_curr_plate();
+        return current_plate != nullptr && current_plate == expected_plate && current_plate->is_slice_result_valid() &&
+               current_plate->can_slice() && !q->only_gcode_mode() && !q->using_exported_file() &&
+               !sidebar->has_broken_mixed_filament(current_plate) && !q->is_background_process_slicing();
+    };
+    if (!launch_allowed()) return;
+    if (helio_background_process.is_running()) {
+        MessageDialog dlg(nullptr, _L("A thermal analysis or optimization is already running."), _L("Thermal Optimization"), wxOK | wxICON_INFORMATION);
+        dlg.ShowModal();
+        return;
+    }
+    GCodeProcessorResult* g_result = background_process.get_current_gcode_result();
+    if (g_result == nullptr) return;
+
+    // Model defaults from the first filament used on the plate.
+    const DynamicPrintConfig& cfg = wxGetApp().preset_bundle->full_config();
+    size_t filament = g_result->used_filaments.empty() ? 0 : size_t(std::max(0, g_result->used_filaments.front().filament_id));
+    auto string_at = [&](const char* key) {
+        const auto* opt = cfg.option<ConfigOptionStrings>(key);
+        return opt != nullptr && !opt->values.empty() ? opt->get_at(filament) : std::string();
+    };
+    auto int_at = [&](const std::string& key, int fallback) {
+        const auto* opt = cfg.option<ConfigOptionInts>(key);
+        return opt != nullptr && !opt->values.empty() ? opt->get_at(filament) : fallback;
+    };
+    auto float_at = [&](const char* key, float fallback) {
+        const auto* opt = cfg.option<ConfigOptionFloats>(key);
+        return opt != nullptr && !opt->values.empty() ? float(opt->get_at(filament)) : fallback;
+    };
+    const float vitrification = filament < g_result->filament_vitrification_temperature.size() ? float(g_result->filament_vitrification_temperature[filament]) : -1.f;
+    ThermalModelParams params = ThermalModelParams::for_material(string_at("filament_type"), vitrification);
+    params.bed_temp           = float(int_at(get_bed_temp_key(partplate_list.get_curr_plate()->get_bed_type(true)), 60));
+    params.chamber_temp       = float(int_at("chamber_temperatures", 0));
+    ThermalOptimizeOptions options;
+    options.max_volumetric = float_at("filament_max_volumetric_speed", -1.f);
+
+    ThermalOptimizationInputDialog dlg(nullptr, params, options, g_helio_pre_select_optimization);
+    g_helio_pre_select_optimization = false;
+    if (dlg.ShowModal() != wxID_OK || !launch_allowed()) return;
+
+    if (!helio_background_process.init_local(g_result, preview, dlg.get_params(), dlg.get_options())) {
+        MessageDialog msg(nullptr, _L("The previous thermal task is still stopping; try again shortly."), _L("Thermal Optimization"), wxOK | wxICON_WARNING);
+        msg.ShowModal();
+        return;
+    }
+    helio_background_process.set_action(dlg.get_action());
+    if (!helio_background_process.helio_thread_start(background_process.m_mutex, background_process.m_condition, background_process.m_state, notification_manager)) {
+        MessageDialog msg(nullptr, _L("The previous thermal task is still stopping; try again shortly."), _L("Thermal Optimization"), wxOK | wxICON_WARNING);
+        msg.ShowModal();
+    }
+}
+
 void Plater::priv::on_helio_input_dlg(SimpleEvent &a)
 {
     const PartPlate* current_plate = partplate_list.get_curr_plate();
@@ -15808,6 +15871,12 @@ void Plater::priv::on_helio_input_dlg(SimpleEvent &a)
         !current_plate->can_slice() || q->only_gcode_mode() || q->using_exported_file() ||
         sidebar->has_broken_mixed_filament(current_plate) || q->is_background_process_slicing())
         return;
+
+    // The built-in Thermal Optimization is the default; the cloud service is used only when it was explicitly enabled.
+    if (wxGetApp().app_config->get("helio_enable") != "true") {
+        on_thermal_optimization(current_plate);
+        return;
+    }
 
     std::string helio_api_key = Slic3r::HelioQuery::get_helio_pat();
 

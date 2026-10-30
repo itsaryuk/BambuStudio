@@ -184,6 +184,8 @@ void HelioStatementDialog::on_confirm(wxMouseEvent& e)
     /*show helio on main windows*/
     if (wxGetApp().mainframe->expand_program_holder) {
         wxGetApp().mainframe->expand_program_holder->ShowExpandButton(wxGetApp().mainframe->expand_helio_id, true);
+        wxGetApp().mainframe->expand_program_holder->updateExpandButtonBitmap(wxGetApp().mainframe->expand_helio_id, "helio_icon_topbar");
+        wxGetApp().mainframe->expand_program_holder->SetExpandButtonRichTooltip(wxGetApp().mainframe->expand_helio_id, "monitor_speed", _L("Unlock faster, more reliable, warp-free prints with Helio Additive."));
         wxGetApp().mainframe->Layout();
     }
 
