@@ -90,6 +90,7 @@ private:
 
     void OnPaint(wxPaintEvent &evt);
     void OnTimer(wxTimerEvent &evt);
+    void track_hover(wxWindow *w);
     /**
      * \brief Drive one frame of the copy-icon confirmation, then re-arm or finish the animation.
      *
@@ -130,6 +131,7 @@ private:
 
     wxTimer *m_timer = nullptr;
     bool     m_hide  = false;
+    bool     m_mouse_over = false; // pointer is over the card, from enter/leave events
     wxPoint  m_request_pos;
 
     // "Copied!" confirmation: the two crossfade endpoints, plus the frame counter that walks

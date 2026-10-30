@@ -683,6 +683,18 @@ void ParamTooltip::build_layout()
     outer->Add(col, 1, wxEXPAND);
     outer->AddSpacer(FromDIP(PAD));
     SetSizer(outer);
+    track_hover(this);
+}
+
+// Hover state from enter/leave events. Polling wxGetMousePosition() is unreliable under XWayland: once the
+// pointer moves onto a non-X surface the last position (still inside the card) is reported forever, so the
+// pending hide kept re-arming and the card never went away.
+void ParamTooltip::track_hover(wxWindow *w)
+{
+    w->Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent &e) { m_mouse_over = true; e.Skip(); });
+    w->Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &e) { m_mouse_over = false; e.Skip(); });
+    for (wxWindow *child : w->GetChildren())
+        track_hover(child);
 }
 
 wxBitmap ParamTooltip::LoadImage(const std::string &image_id, bool dark)
@@ -764,6 +776,8 @@ void ParamTooltip::set_details(const wxString &s, const wxColour &fg, const wxCo
         row.marker->SetFont(Label::Body_13);
         row.text = new Label(m_details, Label::Body_13, wxEmptyString);
         row.text->SetFont(Label::Body_13);
+        track_hover(row.marker);
+        track_hover(row.text);
 
         row.sizer = new wxBoxSizer(wxHORIZONTAL);
         row.sizer->Add(row.marker, 0, wxALIGN_TOP); // the marker sits on the point's first line
@@ -963,6 +977,7 @@ void ParamTooltip::DoHide(bool now)
 {
     if (now) {
         m_hide = true;
+        m_mouse_over = false; // no leave event arrives for a window unmapped under the pointer
         wxPopupWindow::Hide();
         update_shadow(false);
         return;
@@ -976,11 +991,11 @@ void ParamTooltip::DoHide(bool now)
 void ParamTooltip::OnTimer(wxTimerEvent &)
 {
     if (m_hide) {
-        wxPoint mp = ScreenToClient(wxGetMousePosition());
-        if (GetClientRect().Contains(mp)) {
+        if (m_mouse_over) {
             m_timer->StartOnce(HIDE_DELAY_MS);
             return;
         }
+        m_mouse_over = false;
         wxPopupWindow::Hide();
         update_shadow(false);
     } else {
