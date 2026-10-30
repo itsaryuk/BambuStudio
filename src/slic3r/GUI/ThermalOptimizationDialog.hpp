@@ -19,16 +19,16 @@ namespace Slic3r { namespace GUI {
 class ThermalOptimizationInputDialog : public DPIDialog
 {
 public:
-    ThermalOptimizationInputDialog(wxWindow* parent, const ThermalModelParams& params, const ThermalOptimizeOptions& options, bool preselect_optimize);
+    ThermalOptimizationInputDialog(wxWindow* parent, const ThermalMaterials& params, const ThermalOptimizeOptions& options, bool preselect_optimize);
 
     int                    get_action() const { return m_optimize->GetValue() ? 1 : 0; } // 0 analyze, 1 optimize
-    ThermalModelParams     get_params() const;
+    ThermalMaterials       get_params() const;
     ThermalOptimizeOptions get_options() const;
 
     void on_dpi_changed(const wxRect& suggested_rect) override { Fit(); Refresh(); }
 
 private:
-    ThermalModelParams     m_params;
+    ThermalMaterials       m_params;
     ThermalOptimizeOptions m_options;
     wxRadioButton*         m_analyze{nullptr};
     wxRadioButton*         m_optimize{nullptr};

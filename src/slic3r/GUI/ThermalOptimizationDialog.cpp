@@ -45,7 +45,7 @@ wxString seconds_text(int s) { return wxString::FromUTF8(short_time(get_time_dhm
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent, const ThermalModelParams& params,
+ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent, const ThermalMaterials& params,
                                                                const ThermalOptimizeOptions& options, bool preselect_optimize)
     : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, TITLE, wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
     , m_params(params)
@@ -67,7 +67,16 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     sizer->Add(m_analyze, 0, wxLEFT | wxRIGHT, pad);
     sizer->Add(m_optimize, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
     sizer->AddSpacer(pad);
-    sizer->Add(new Label(this, Label::Body_12, _L("Values below are prefilled from the current presets.")), 0, wxLEFT | wxRIGHT, pad);
+    wxString materials;
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (params[i].material.empty()) continue;
+        if (!materials.empty()) materials += ", ";
+        materials += wxString::Format("%s (%.0f ± %.0f °C)", wxString::FromUTF8(params[i].material), params[i].ideal_substrate_temp, params[i].window_half_width);
+    }
+    auto* mats = new Label(this, Label::Body_12, wxString::Format(_L("Material model from the filament presets: %s. Values below are prefilled from the current presets."), materials), LB_AUTO_WRAP);
+    mats->SetMinSize(wxSize(FromDIP(440), -1));
+    mats->Wrap(FromDIP(440));
+    sizer->Add(mats, 0, wxLEFT | wxRIGHT, pad);
 
     auto* grid = new wxFlexGridSizer(2, FromDIP(6), FromDIP(10));
     grid->AddGrowableCol(1);
@@ -76,7 +85,7 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
         grid->Add(ctrl, 0, wxALIGN_CENTER_VERTICAL);
     };
     m_chamber = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0, 120,
-                               int(std::max(0.f, params.chamber_temp)));
+                               int(std::max(0.f, params.empty() ? 0.f : params.front().chamber_temp)));
     row(_L("Chamber temperature (°C, 0 = unheated)"), m_chamber);
     m_speed_up = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0, 100,
                                 int(std::lround((options.max_speed_factor - 1.f) * 100.f)));
@@ -110,10 +119,11 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     wxGetApp().UpdateDlgDarkUI(this);
 }
 
-ThermalModelParams ThermalOptimizationInputDialog::get_params() const
+ThermalMaterials ThermalOptimizationInputDialog::get_params() const
 {
-    ThermalModelParams p = m_params;
-    p.chamber_temp       = float(m_chamber->GetValue());
+    ThermalMaterials p = m_params;
+    if (p.empty()) p.emplace_back();
+    for (ThermalModelParams& m : p) m.chamber_temp = float(m_chamber->GetValue());
     return p;
 }
 
@@ -149,6 +159,7 @@ ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* paren
                               report.mean, report.stddev, int(std::lround(report.hot_fraction * 100)), int(std::lround(report.cold_fraction * 100))));
 
     for (const std::string& c : report.caveats) add_line(wxString::FromUTF8("- " + c));
+    for (const std::string& a : report.assumptions) add_line(wxString::FromUTF8(a));
 
     if (!report.fixes.empty()) {
         add_line(_L("Suggestions"), true);

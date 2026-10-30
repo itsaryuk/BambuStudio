@@ -1,11 +1,13 @@
 #include "ThermalQuality.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <map>
 
+#include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/nowide/fstream.hpp>
 
@@ -97,21 +99,85 @@ std::string format_tag(const ThermalMoveIndex& t)
 
 } // namespace
 
+namespace {
+
+struct MaterialClass
+{
+    const char* name;
+    float       midpoint;      // comfort midpoint when the profile has no vitrification temperature
+    float       half_width;    // narrower for materials that warp or sag easily
+    float       cooling_mult;  // > 1: semi-crystalline (latent heat keeps the layer warm longer)
+    float       fan_gain;      // how much the part fan shortens the cooling time
+    bool        warp_prone;
+};
+
+const std::map<std::string, MaterialClass>& material_classes()
+{
+    static const std::map<std::string, MaterialClass> classes = {
+        {"PLA",  {"PLA", 45.f, 40.f, 1.0f, 1.5f, false}},
+        {"PHA",  {"PLA", 45.f, 40.f, 1.0f, 1.5f, false}},
+        {"PETG", {"PETG", 70.f, 35.f, 1.0f, 1.3f, false}},
+        {"PET",  {"PETG", 70.f, 35.f, 1.0f, 1.3f, false}},
+        {"PCTG", {"PETG", 75.f, 35.f, 1.0f, 1.3f, false}},
+        {"ABS",  {"ABS", 100.f, 30.f, 1.0f, 1.5f, true}},
+        {"HIPS", {"ABS", 95.f, 30.f, 1.0f, 1.5f, true}},
+        {"ASA",  {"ASA", 100.f, 30.f, 1.0f, 1.5f, true}},
+        {"PC",   {"PC", 125.f, 30.f, 1.0f, 1.5f, true}},
+        {"PA",   {"PA", 110.f, 35.f, 1.2f, 1.4f, true}},
+        {"PAHT", {"PAHT", 125.f, 30.f, 1.2f, 1.4f, true}},
+        {"PPA",  {"PPA", 130.f, 30.f, 1.2f, 1.4f, true}},
+        {"PPS",  {"PPS", 130.f, 30.f, 1.2f, 1.4f, true}},
+        {"PP",   {"PP", 90.f, 25.f, 1.2f, 1.3f, true}},
+        {"PE",   {"PE", 85.f, 25.f, 1.2f, 1.3f, true}},
+        {"TPU",  {"TPU", 60.f, 50.f, 0.9f, 1.5f, false}},
+        {"EVA",  {"TPU", 55.f, 50.f, 0.9f, 1.5f, false}},
+        {"PVA",  {"PVA", 60.f, 40.f, 1.0f, 1.5f, false}},
+        {"BVOH", {"PVA", 60.f, 40.f, 1.0f, 1.5f, false}},
+        {"PEEK", {"PEEK", 180.f, 25.f, 1.2f, 1.2f, true}},
+        {"PEKK", {"PEEK", 175.f, 25.f, 1.2f, 1.2f, true}},
+        {"PEI",  {"PEI", 190.f, 25.f, 1.0f, 1.2f, true}},
+    };
+    return classes;
+}
+
+const MaterialClass* find_material_class(std::string type)
+{
+    boost::to_upper(type);
+    const auto& classes = material_classes();
+    auto        it      = classes.find(type);
+    if (it != classes.end()) return &it->second;
+    if (size_t dash = type.find('-'); dash != std::string::npos) { // PLA-CF, ASA-AERO, TPU-AMS
+        type = type.substr(0, dash);
+        if (it = classes.find(type); it != classes.end()) return &it->second;
+    }
+    while (!type.empty() && std::isdigit((unsigned char) type.back())) type.pop_back(); // PA6, PA12
+    it = classes.find(type);
+    return it != classes.end() ? &it->second : nullptr;
+}
+
+const ThermalModelParams& material_for(const ThermalMaterials& mats, unsigned char extruder_id)
+{
+    static const ThermalModelParams fallback;
+    if (mats.empty()) return fallback;
+    return extruder_id < mats.size() ? mats[extruder_id] : mats.front();
+}
+
+} // namespace
+
 ThermalModelParams ThermalModelParams::for_material(const std::string& filament_type, float vitrification_temp)
 {
-    static const std::map<std::string, float> midpoints = {
-        {"PLA", 45.f},  {"PLA-CF", 45.f}, {"PETG", 70.f}, {"PETG-CF", 70.f}, {"PET", 70.f},   {"PCTG", 75.f},
-        {"ABS", 100.f}, {"ASA", 100.f},   {"HIPS", 95.f}, {"PC", 125.f},     {"PA", 110.f},   {"PA-CF", 110.f},
-        {"PA6-CF", 110.f}, {"PAHT-CF", 120.f}, {"PPA-CF", 130.f}, {"PPS", 130.f}, {"PPS-CF", 130.f},
-        {"PP", 90.f},   {"TPU", 60.f},    {"PVA", 60.f},  {"BVOH", 60.f},    {"PEEK", 180.f}, {"PEI", 190.f},
-    };
     ThermalModelParams p;
-    if (vitrification_temp > 0.f)
-        p.ideal_substrate_temp = vitrification_temp;
-    else if (auto it = midpoints.find(filament_type); it != midpoints.end())
-        p.ideal_substrate_temp = it->second;
-    else
-        p.ideal_substrate_temp = 70.f;
+    const MaterialClass* c = find_material_class(filament_type);
+    p.material             = c != nullptr ? c->name : (filament_type.empty() ? "unknown" : filament_type);
+    p.ideal_substrate_temp = vitrification_temp > 0.f ? vitrification_temp : (c != nullptr ? c->midpoint : 70.f);
+    if (c != nullptr) {
+        p.window_half_width  = c->half_width;
+        p.cooling_time_const = 6.f * c->cooling_mult;
+        p.fan_cooling_gain   = c->fan_gain;
+        p.warp_prone         = c->warp_prone;
+    }
+    std::string upper = boost::to_upper_copy(filament_type);
+    if (boost::contains(upper, "-CF") || boost::contains(upper, "-GF")) p.cooling_time_const *= 0.85f; // fillers conduct heat away faster
     return p;
 }
 
@@ -151,11 +217,13 @@ bool ThermalQuality::eligible(const MoveVertex& m, int layer, const ThermalOptim
 
 ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
                                        const std::vector<int>&       move_layers,
-                                       const ThermalModelParams&     params,
+                                       const ThermalMaterials&       materials,
                                        const std::vector<float>*     layer_speed_factors,
                                        const ThermalOptimizeOptions* eligibility)
 {
-    ThermalReport rep;
+    ThermalReport             rep;
+    const ThermalModelParams& params = material_for(materials, 0); // bed, chamber and grid settings are shared
+    std::vector<bool>         used_slot(std::max<size_t>(materials.size(), 1), false);
     const auto& moves = result.moves;
     rep.moves.assign(moves.size(), {});
 
@@ -186,7 +254,6 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
         return cells[size_t(cy) * nx + cx];
     };
 
-    const float mid = params.ideal_substrate_temp, half = std::max(params.window_half_width, 1.f);
     std::vector<double> layer_sum(n_layers, 0.), layer_time(n_layers, 0.);
     double sum = 0., sum2 = 0., total = 0., hot = 0., cold = 0.;
 
@@ -211,8 +278,11 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
         float total_len = 0.f;
         for (size_t k = 1; k < pts.size(); ++k) total_len += (pts[k].head<2>() - pts[k - 1].head<2>()).norm();
 
+        const ThermalModelParams& mat = material_for(materials, m.extruder_id);
+        if (m.extruder_id < used_slot.size()) used_slot[m.extruder_id] = true;
+        const float mid = mat.ideal_substrate_temp, half = std::max(mat.window_half_width, 1.f);
         const float t_env   = env_temp(params, m.position.z());
-        const float tau     = cooling_tau(params, m);
+        const float tau     = cooling_tau(mat, m);
         const float t_noz   = m.temperature > 0.f ? m.temperature : 200.f;
         float       mn = 1e9f, mx = -1e9f;
         double      acc = 0.;
@@ -234,7 +304,7 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
                     t_sub = (L == 0) ? params.bed_temp : t_env; // bed, or air under an overhang/bridge
                 const float idx = std::clamp((t_sub - mid) / half, -1.f, 1.f);
                 mn = std::min(mn, idx); mx = std::max(mx, idx); acc += idx; ++cnt;
-                c.t = t_s; c.temp = params.deposit_mix * t_noz + (1.f - params.deposit_mix) * t_sub; c.tau = tau; c.layer = L;
+                c.t = t_s; c.temp = mat.deposit_mix * t_noz + (1.f - mat.deposit_mix) * t_sub; c.tau = tau; c.layer = L;
             }
             walked += len;
         }
@@ -279,13 +349,32 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
     runs(true);
     runs(false);
 
+    bool warp = false;
+    for (size_t slot = 0; slot < used_slot.size(); ++slot) {
+        if (!used_slot[slot]) continue;
+        const ThermalModelParams& mat = material_for(materials, (unsigned char) slot);
+        warp |= mat.warp_prone;
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "Filament %zu: %s model, comfort window %.0f ± %.0f °C, cooling constant %.1f s.", slot + 1,
+                      mat.material.c_str(), mat.ideal_substrate_temp, mat.window_half_width, mat.cooling_time_const);
+        rep.assumptions.emplace_back(buf);
+    }
+
     if (rep.direction == "OVERHEATING") {
-        rep.fixes.emplace_back("QUICK", "Raise the part cooling fan or the minimum layer time so small layers can cool before the next one lands.");
+        if (warp)
+            rep.fixes.emplace_back("QUICK", "Raise the minimum layer time rather than the part fan: this material warps when fan-cooled, it only needs time to set.");
+        else
+            rep.fixes.emplace_back("QUICK", "Raise the part cooling fan or the minimum layer time so small layers can cool before the next one lands.");
         rep.fixes.emplace_back("ADVANCED", "Print several parts at once or add a sacrificial tower so every layer gets more time to cool.");
         rep.fixes.emplace_back("EXPERT", "Lower the nozzle temperature a few degrees, or reduce wall count on fine features to shed heat faster.");
     } else if (rep.direction == "OVERCOOLING") {
-        rep.fixes.emplace_back("QUICK", "Reduce the part cooling fan and close the enclosure (or raise the chamber temperature) to keep layers warm.");
-        rep.fixes.emplace_back("ADVANCED", "Raise the bed temperature and add a brim to fight warping on large, cold layers.");
+        if (warp) {
+            rep.fixes.emplace_back("QUICK", "Close the enclosure, raise the chamber temperature and turn the part fan down: this material needs a warm substrate to bond and stay flat.");
+            rep.fixes.emplace_back("ADVANCED", "Raise the bed temperature, add a brim and avoid drafts; large cold layers are where warping starts.");
+        } else {
+            rep.fixes.emplace_back("QUICK", "Reduce the part cooling fan so layers stay warm a little longer.");
+            rep.fixes.emplace_back("ADVANCED", "Raise the bed temperature a few degrees; this material tolerates cold layers but bonds better when warm.");
+        }
         rep.fixes.emplace_back("EXPERT", "Run Optimize: faster large layers lose less heat between passes.");
     } else {
         rep.fixes.emplace_back("QUICK", "Thermal conditions look balanced. Optimize can trade the spare cooling margin for print time.");
@@ -295,25 +384,28 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
 
 std::vector<float> ThermalQuality::optimize(const GCodeProcessorResult&   result,
                                             const std::vector<int>&       move_layers,
-                                            const ThermalModelParams&     params,
+                                            const ThermalMaterials&       materials,
                                             const ThermalOptimizeOptions& options)
 {
     int n_layers = 0;
     for (int L : move_layers) n_layers = std::max(n_layers, L + 1);
-    std::vector<float> factors(n_layers, 1.f), cap(n_layers, options.max_speed_factor);
+    std::vector<float> factors(n_layers, 1.f), cap(n_layers, options.max_speed_factor), floor(n_layers, options.min_speed_factor);
     std::vector<bool>  touched(n_layers, false);
     for (size_t i = 0; i < result.moves.size(); ++i) {
         const auto& m = result.moves[i];
         const int   L = move_layers[i];
         if (L < 0 || !eligible(m, L, options)) continue;
         touched[L] = true;
+        const ThermalModelParams& mat     = material_for(materials, m.extruder_id);
+        const float max_vol = options.max_volumetric > 0.f ? options.max_volumetric : mat.max_volumetric; // dialog overrides the profile
         if (options.max_speed > 0.f && m.feedrate > 0.f) cap[L] = std::min(cap[L], options.max_speed / m.feedrate);
-        if (options.max_volumetric > 0.f && m.volumetric_rate() > 0.f) cap[L] = std::min(cap[L], options.max_volumetric / m.volumetric_rate());
+        if (max_vol > 0.f && m.volumetric_rate() > 0.f) cap[L] = std::min(cap[L], max_vol / m.volumetric_rate());
+        if (mat.min_speed > 0.f && m.feedrate > 0.f) floor[L] = std::max(floor[L], std::min(1.f, mat.min_speed / m.feedrate)); // never below the profile slow-down floor
     }
-    for (int L = 0; L < n_layers; ++L) cap[L] = std::max(cap[L], options.min_speed_factor);
+    for (int L = 0; L < n_layers; ++L) cap[L] = std::max(cap[L], floor[L]);
 
     for (int pass = 0; pass < std::max(options.passes, 1); ++pass) {
-        ThermalReport rep = simulate(result, move_layers, params, &factors, &options);
+        ThermalReport rep = simulate(result, move_layers, materials, &factors, &options);
         for (int L = 0; L < n_layers; ++L) {
             if (!touched[L]) continue;
             const float m = rep.layer_mean[L];
@@ -321,7 +413,7 @@ std::vector<float> ThermalQuality::optimize(const GCodeProcessorResult&   result
                 factors[L] *= 1.f + 0.5f * (-0.3f - m);
             else if (m > 0.3f)
                 factors[L] *= 1.f - 0.5f * (m - 0.3f);
-            factors[L] = std::clamp(factors[L], options.min_speed_factor, cap[L]);
+            factors[L] = std::clamp(factors[L], floor[L], cap[L]);
         }
     }
     return factors;
@@ -368,13 +460,34 @@ bool ThermalQuality::write_gcode(const ThermalGCodeText&       text,
         return (*layer_speed_factors)[L];
     };
 
+    // Rescaled cumulative time per move, so M73 progress lines can be recomputed after optimization.
+    const bool          rescaled = layer_speed_factors != nullptr && options != nullptr;
+    std::vector<double> scaled(result.moves.size(), 0.);
+    std::vector<int>    line_any_move(text.lines.size() + 1, -1);
+    for (size_t i = 1; i < result.moves.size(); ++i) {
+        const auto& m  = result.moves[i];
+        const int   L  = move_layers[i];
+        double      dt = std::max(0.f, m.time[0] - result.moves[i - 1].time[0]);
+        if (rescaled && L >= 0 && L < int(layer_speed_factors->size()) && eligible(m, L, *options)) dt /= std::max((*layer_speed_factors)[L], 0.05f);
+        scaled[i] = scaled[i - 1] + dt;
+        if (m.gcode_id < line_any_move.size()) line_any_move[m.gcode_id] = int(i);
+    }
+    const double total_time = scaled.empty() ? 0. : scaled.back();
+    int          last_move  = 0;
+
     boost::nowide::ofstream out(dst.c_str(), std::ios::out | std::ios::binary | std::ios::trunc);
     if (!out.good()) return false;
-    // ponytail: M73 progress lines are left as sliced; they drift after rescaling. Regenerate if it matters.
     for (size_t i = 0; i < text.lines.size(); ++i) {
         const size_t    idx1 = i + 1;
         const LineInfo& info = infos[i];
         std::string     line = text.lines[i];
+        if (line_any_move[idx1] > last_move) last_move = line_any_move[idx1];
+        if (rescaled && total_time > 0. && boost::starts_with(line, "M73 P") && line.find(" R") != std::string::npos) {
+            const double elapsed = scaled[last_move];
+            char         buf[48];
+            std::snprintf(buf, sizeof(buf), "M73 P%d R%d", int(std::clamp(elapsed / total_time * 100., 0., 100.)), int((total_time - elapsed + 30.) / 60.));
+            line = buf;
+        }
         if (info.motion && info.f_pos != std::string::npos && info.f > 0.) {
             // An F-only line applies to the next XY move; find it.
             size_t target = idx1;

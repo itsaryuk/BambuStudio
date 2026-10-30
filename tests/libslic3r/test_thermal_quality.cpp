@@ -221,3 +221,82 @@ TEST_CASE("Thermal quality: written G-code carries tags and rescaled feedrates",
     REQUIRE(ti.mean == Approx(10.f));
     REQUIRE(!ti.isNull);
 }
+
+TEST_CASE("Thermal quality: material classes, per-filament models, profile floor and M73 rewrite", "[ThermalQuality]")
+{
+    // Class lookup: exact, base type before '-', trailing digits stripped, fillers cool faster, unknown falls back.
+    ThermalModelParams abs_gf = ThermalModelParams::for_material("ABS-GF", -1.f);
+    REQUIRE(abs_gf.material == "ABS");
+    REQUIRE(abs_gf.ideal_substrate_temp == Approx(100.f));
+    REQUIRE(abs_gf.warp_prone);
+    REQUIRE(abs_gf.cooling_time_const == Approx(6.f * 0.85f));
+    ThermalModelParams pa6 = ThermalModelParams::for_material("pa6-cf", -1.f);
+    REQUIRE(pa6.material == "PA");
+    REQUIRE(pa6.cooling_time_const == Approx(6.f * 1.2f * 0.85f));
+    REQUIRE(ThermalModelParams::for_material("PLA-AERO", -1.f).material == "PLA");
+    REQUIRE(ThermalModelParams::for_material("TPU-AMS", -1.f).window_half_width == Approx(50.f));
+    ThermalModelParams unknown = ThermalModelParams::for_material("MYSTERY", -1.f);
+    REQUIRE(unknown.ideal_substrate_temp == Approx(70.f));
+    REQUIRE(unknown.material == "MYSTERY");
+    REQUIRE(ThermalModelParams::for_material("ABS", 108.f).ideal_substrate_temp == Approx(108.f)); // profile wins
+
+    // Two filament slots: the column prints with slot 1. Same toolpaths, different comfort windows.
+    Scene s(true, true);
+    for (auto& m : s.result.moves)
+        if (m.type == EMoveType::Extrude && m.extrusion_role == erPerimeter) m.extruder_id = 1;
+    ThermalMaterials mats = {pla_cold_bed(), ThermalModelParams::for_material("ABS", 100.f)};
+    mats[1].bed_temp = 25.f;
+    ThermalReport two = ThermalQuality::simulate(s.result, s.move_layers, mats);
+    ThermalReport one = ThermalQuality::simulate(s.result, s.move_layers, pla_cold_bed());
+    size_t col_move = 0;
+    for (size_t i = 1; i < s.result.moves.size(); ++i)
+        if (s.result.moves[i].extruder_id == 1 && s.move_layers[i] == 5) { col_move = i; break; }
+    REQUIRE(col_move > 0);
+    REQUIRE(two.moves[col_move].mean < one.moves[col_move].mean); // ABS wants a 100 °C substrate: the warm column reads colder
+    REQUIRE(two.assumptions.size() == 2);
+    REQUIRE(two.assumptions[1].find("ABS") != std::string::npos);
+    REQUIRE(two.assumptions[0].find("PLA") != std::string::npos);
+    bool warp_advice = false;
+    for (const auto& f : two.fixes) warp_advice |= f.second.find("enclosure") != std::string::npos || f.second.find("warps") != std::string::npos;
+    if (two.direction != "NONE") REQUIRE(warp_advice);
+
+    // Profile slow-down floor and max volumetric cap, without dialog overrides.
+    Scene c(false, true); // hot column at 8 mm/s gets slowed down
+    ThermalOptimizeOptions o;
+    o.keep_outer_walls = false;
+    ThermalMaterials floor_mats = {pla_cold_bed()};
+    floor_mats[0].min_speed    = 7.f; // 7/8 = 0.875 floor
+    std::vector<float> f = ThermalQuality::optimize(c.result, c.move_layers, floor_mats, o);
+    REQUIRE(f[5] >= 0.875f - 1e-4f);
+    REQUIRE(f[5] < 0.95f);
+    Scene slab(true, false);
+    ThermalMaterials cap_mats = {pla_cold_bed()};
+    cap_mats[0].max_volumetric = 2.6f; // 30 mm/s * 0.084 = 2.52 mm3/s
+    f = ThermalQuality::optimize(slab.result, slab.move_layers, cap_mats, o);
+    REQUIRE(f[5] <= 2.6f / 2.52f + 1e-3f);
+
+    // M73 lines are recomputed from the rescaled timeline.
+    Scene m;
+    m.text.lines[0] = "M73 P0 R999";       // replaces "; HEADER", line ids unchanged
+    m.text.lines.push_back("M73 P100 R0");  // appended, ids unchanged
+    m.text.line_layers.push_back(m.text.line_layers.back());
+    std::vector<float> fx(m.n_layers, 1.f);
+    fx[3] = 2.f;
+    ThermalReport rep = ThermalQuality::simulate(m.result, m.move_layers, pla_cold_bed(), &fx, &o);
+    double total = 0.;
+    for (size_t i = 1; i < m.result.moves.size(); ++i) {
+        double dt = m.result.moves[i].time[0] - m.result.moves[i - 1].time[0];
+        if (m.move_layers[i] == 3 && ThermalQuality::eligible(m.result.moves[i], 3, o)) dt /= 2.;
+        total += dt;
+    }
+    boost::filesystem::path out = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("thermal-%%%%.gcode");
+    REQUIRE(ThermalQuality::write_gcode(m.text, out.string(), m.result, m.move_layers, rep, &fx, &o));
+    ThermalGCodeText back;
+    REQUIRE(ThermalGCodeText::load(out.string(), back));
+    boost::filesystem::remove(out);
+    char expect[48];
+    std::snprintf(expect, sizeof(expect), "M73 P0 R%d", int((total + 30.) / 60.));
+    REQUIRE(back.lines.front() == expect);
+    REQUIRE(back.lines.back() == "M73 P100 R0");
+    REQUIRE(total < m.result.moves.back().time[0]); // the rescaled timeline really is shorter
+}

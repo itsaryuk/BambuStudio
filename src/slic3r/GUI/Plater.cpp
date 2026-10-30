@@ -15826,27 +15826,32 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
     GCodeProcessorResult* g_result = background_process.get_current_gcode_result();
     if (g_result == nullptr) return;
 
-    // Model defaults from the first filament used on the plate.
-    const DynamicPrintConfig& cfg = wxGetApp().preset_bundle->full_config();
-    size_t filament = g_result->used_filaments.empty() ? 0 : size_t(std::max(0, g_result->used_filaments.front().filament_id));
-    auto string_at = [&](const char* key) {
-        const auto* opt = cfg.option<ConfigOptionStrings>(key);
-        return opt != nullptr && !opt->values.empty() ? opt->get_at(filament) : std::string();
-    };
-    auto int_at = [&](const std::string& key, int fallback) {
+    // One material model per filament slot (moves carry the slot in extruder_id); bed and chamber are shared.
+    const DynamicPrintConfig& cfg   = wxGetApp().preset_bundle->full_config();
+    const auto*               types = cfg.option<ConfigOptionStrings>("filament_type");
+    const size_t              n_fil = std::max<size_t>(1, types != nullptr ? types->values.size() : 0);
+    auto int_at = [&](const std::string& key, size_t f, int fallback) {
         const auto* opt = cfg.option<ConfigOptionInts>(key);
-        return opt != nullptr && !opt->values.empty() ? opt->get_at(filament) : fallback;
+        return opt != nullptr && !opt->values.empty() ? opt->get_at(f) : fallback;
     };
-    auto float_at = [&](const char* key, float fallback) {
+    auto float_at = [&](const char* key, size_t f, float fallback) {
         const auto* opt = cfg.option<ConfigOptionFloats>(key);
-        return opt != nullptr && !opt->values.empty() ? float(opt->get_at(filament)) : fallback;
+        return opt != nullptr && !opt->values.empty() ? float(opt->get_at(f)) : fallback;
     };
-    const float vitrification = filament < g_result->filament_vitrification_temperature.size() ? float(g_result->filament_vitrification_temperature[filament]) : -1.f;
-    ThermalModelParams params = ThermalModelParams::for_material(string_at("filament_type"), vitrification);
-    params.bed_temp           = float(int_at(get_bed_temp_key(partplate_list.get_curr_plate()->get_bed_type(true)), 60));
-    params.chamber_temp       = float(int_at("chamber_temperatures", 0));
-    ThermalOptimizeOptions options;
-    options.max_volumetric = float_at("filament_max_volumetric_speed", -1.f);
+    const float bed_temp     = float(int_at(get_bed_temp_key(partplate_list.get_curr_plate()->get_bed_type(true)), 0, 60));
+    const float chamber_temp = float(int_at("chamber_temperatures", 0, 0));
+    ThermalMaterials params;
+    for (size_t f = 0; f < n_fil; ++f) {
+        const std::string type          = types != nullptr && f < types->values.size() ? types->values[f] : std::string();
+        const float       vitrification = f < g_result->filament_vitrification_temperature.size() ? float(g_result->filament_vitrification_temperature[f]) : float(int_at("temperature_vitrification", f, -1));
+        ThermalModelParams p = ThermalModelParams::for_material(type, vitrification);
+        p.bed_temp           = bed_temp;
+        p.chamber_temp       = chamber_temp;
+        p.max_volumetric     = float_at("filament_max_volumetric_speed", f, -1.f);
+        p.min_speed          = float_at("slow_down_min_speed", f, -1.f);
+        params.push_back(p);
+    }
+    ThermalOptimizeOptions options; // max_volumetric stays unset: the per-filament profile limit applies unless the user overrides it
 
     ThermalOptimizationInputDialog dlg(nullptr, params, options, g_helio_pre_select_optimization);
     g_helio_pre_select_optimization = false;

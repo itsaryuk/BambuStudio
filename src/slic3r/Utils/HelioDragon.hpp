@@ -487,7 +487,7 @@ public:
 
     // Built-in Thermal Optimization: runs the local layer-stack model instead of the cloud service.
     bool                    local_engine{false};
-    ThermalModelParams      local_params;
+    ThermalMaterials        local_params;
     ThermalOptimizeOptions  local_options;
 
     int                     action{-1}; // 0=simulation, 1=optimization
@@ -654,7 +654,7 @@ public:
     }
 
     bool init_local(Slic3r::GCodeProcessorResult* gcode_result, Slic3r::GUI::Preview* preview,
-                    const ThermalModelParams& params, const ThermalOptimizeOptions& options)
+                    const ThermalMaterials& params, const ThermalOptimizeOptions& options)
     {
         if (!begin_action())
             return false;
