@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include <cmath>
+#include <map>
 
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
@@ -312,6 +313,27 @@ TEST_CASE("Thermal quality: material classes, per-filament models, profile floor
     REQUIRE(total < m.result.moves.back().time[0]); // the rescaled timeline really is shorter
 }
 
+TEST_CASE("Thermal quality: tower calibration fits the cooling constant", "[ThermalQuality]")
+{
+    Scene column(false, true); // 2 s layers only
+    ThermalMaterials mats{pla_cold_bed()};
+    const float      target = mats[0].ideal_substrate_temp + 0.8f * mats[0].window_half_width;
+    bool             bounded = true;
+    const float      tau     = ThermalQuality::fit_cooling_constant(column.result, column.move_layers, mats, 0, 5, target, &bounded);
+    REQUIRE(!bounded);
+    REQUIRE(tau > 0.5f);
+    REQUIRE(tau < 60.f);
+    mats[0].cooling_time_const = tau;
+    const ThermalReport rep = ThermalQuality::simulate(column.result, column.move_layers, mats);
+    REQUIRE(rep.layer_substrate_temp[5] == Approx(target).margin(1.f));
+    // a longer constant keeps the substrate hotter, so the fit is unique
+    mats[0].cooling_time_const = tau * 2.f;
+    REQUIRE(ThermalQuality::simulate(column.result, column.move_layers, mats).layer_substrate_temp[5] > target);
+    // the bound is reported when no constant can reach the target
+    ThermalQuality::fit_cooling_constant(column.result, column.move_layers, mats, 0, 5, 1000.f, &bounded);
+    REQUIRE(bounded);
+}
+
 TEST_CASE("Thermal quality: lateral conduction and preset-derived cooling", "[ThermalQuality]")
 {
     // A cold line laid next to a line that is still hot reads warmer when heat may cross between cells.
@@ -404,6 +426,14 @@ TEST_CASE("run the engine on a real G-code file", "[.][thermal_file]")
             std::printf("  --\n");
         }
     std::printf("time_factor %.3f\n", ThermalQuality::time_factor(r, layers, f, o));
+    for (size_t L = f.size() >= 16 ? f.size() - 16 : 0; L < f.size(); ++L) {
+        std::map<int, int> roles; int eligible = 0;
+        for (size_t i = 0; i < r.moves.size(); ++i)
+            if (layers[i] == int(L) && r.moves[i].type == EMoveType::Extrude) { ++roles[int(r.moves[i].extrusion_role)]; eligible += ThermalQuality::eligible(r.moves[i], int(L), o); }
+        std::printf("  layer %zu factor %.3f eligible %d roles:", L, f[L], eligible);
+        for (auto& [role, n] : roles) std::printf(" %d:%d", role, n);
+        std::printf("\n");
+    }
     const std::string dst = std::string(path) + ".thermal_out.gcode";
     REQUIRE(ThermalQuality::write_gcode(text, dst, r, layers, rep, &f, &o));
     boost::nowide::ifstream in(dst.c_str());

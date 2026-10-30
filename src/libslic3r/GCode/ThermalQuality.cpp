@@ -557,6 +557,27 @@ bool ThermalQuality::write_gcode(const ThermalGCodeText&       text,
     return out.good();
 }
 
+float ThermalQuality::fit_cooling_constant(const GCodeProcessorResult& result, const std::vector<int>& move_layers,
+                                           ThermalMaterials materials, int slot, int layer, float target_temp, bool* bounded)
+{
+    if (materials.empty()) materials.emplace_back();
+    ThermalModelParams& mat  = materials[std::clamp<size_t>(size_t(std::max(slot, 0)), 0, materials.size() - 1)];
+    auto                temp = [&](float tau) {
+        mat.cooling_time_const = tau;
+        const ThermalReport rep = simulate(result, move_layers, materials);
+        return layer >= 0 && layer < int(rep.layer_substrate_temp.size()) ? rep.layer_substrate_temp[layer] : target_temp;
+    };
+    float lo = 0.5f, hi = 60.f; // longer constant = hotter substrate
+    if (bounded != nullptr) *bounded = false;
+    if (temp(lo) >= target_temp) { if (bounded != nullptr) *bounded = true; return lo; }
+    if (temp(hi) <= target_temp) { if (bounded != nullptr) *bounded = true; return hi; }
+    for (int it = 0; it < 14; ++it) { // ponytail: plain bisection, ~0.004 s resolution, a dozen simulations
+        const float mid = 0.5f * (lo + hi);
+        (temp(mid) < target_temp ? lo : hi) = mid;
+    }
+    return 0.5f * (lo + hi);
+}
+
 std::string ThermalQuality::quality_grade(float before, float after)
 {
     const float r = (before - after) / std::max(before, 1e-3f);

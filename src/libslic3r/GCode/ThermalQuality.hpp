@@ -137,6 +137,12 @@ public:
     // HIGH / MEDIUM / LOW from a before/after magnitude.
     static std::string quality_grade(float before, float after);
 
+    // Calibration from a printed tower: returns the still-air cooling constant (s) for slot `slot` that puts the
+    // time-weighted substrate temperature of `layer` at `target_temp` (°C). Bisection in [0.5, 60] s; the other
+    // parameters are taken from `materials`. `bounded` is set when a limit was hit.
+    static float fit_cooling_constant(const GCodeProcessorResult& result, const std::vector<int>& move_layers,
+                                      ThermalMaterials materials, int slot, int layer, float target_temp, bool* bounded = nullptr);
+
     static constexpr const char* Tag = ";thermal=";
 };
 

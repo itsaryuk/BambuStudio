@@ -15884,8 +15884,9 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
         // The preset's tuned minimum layer time anchors the cooling constant; a printed tower may have refined the window.
         p.calibrate_cooling_from_preset(float(int_at("slow_down_layer_time", f, 0)), float(int_at("fan_max_speed", f, 100)),
                                         float(int_at("nozzle_temperature", f, 0)), std::max(chamber_temp, p.room_temp));
-        const std::string calibrated = wxGetApp().app_config->get("thermal_half_width_" + boost::to_upper_copy(type));
-        if (!calibrated.empty()) p.window_half_width = std::stof(calibrated);
+        // A printed tower may have calibrated the cooling constant for this filament type; it beats the preset-derived one.
+        const std::string calibrated = wxGetApp().app_config->get("thermal_cooling_" + boost::to_upper_copy(type));
+        if (!calibrated.empty()) p.cooling_time_const = std::stof(calibrated);
         params.push_back(p);
     }
     ThermalOptimizeOptions options; // max_volumetric stays unset: the per-filament profile limit applies unless the user overrides it
@@ -15922,12 +15923,18 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
                           _L("Thermal Optimization"), wxOK | wxICON_WARNING).ShowModal();
             return;
         }
-        const float half = std::clamp((t_sub - mat.ideal_substrate_temp) / 0.8f, 10.f, 120.f); // that layer sits at index +0.8, the hot edge
-        wxGetApp().app_config->set("thermal_half_width_" + type, std::to_string(half));
+        // Fit the cooling constant so that layer sits at the hot edge (+0.8) of the class comfort window: layers below,
+        // with their longer layer times, then come out cooler, which is what the printed tower shows.
+        const float target = mat.ideal_substrate_temp + 0.8f * mat.window_half_width;
+        bool        bounded = false;
+        const float tau     = ThermalQuality::fit_cooling_constant(*g_result, move_layers, mats, slot, layer, target, &bounded);
+        wxGetApp().app_config->set("thermal_cooling_" + type, std::to_string(tau));
+        wxGetApp().app_config->erase("app", "thermal_half_width_" + type); // older calibrations scaled the window instead
         wxGetApp().app_config->save();
-        MessageDialog(nullptr, wxString::Format(_L("Calibrated %s: comfort window %.0f ± %.0f °C (was ± %.0f °C). Layer %d sits at a substrate temperature of %.0f °C. Running the calibration again overwrites this."),
-                                                 wxString::FromUTF8(mat.material), mat.ideal_substrate_temp, half, mat.window_half_width, layer + 1, t_sub),
-                      _L("Thermal Optimization"), wxOK | wxICON_INFORMATION).ShowModal();
+        wxString msg = wxString::Format(_L("Calibrated %s: cooling constant %.1f s in still air (was %.1f s), comfort window %.0f ± %.0f °C. Layer %d at %.1f mm is now rated at the hot edge of the window; the layers below come out cooler. Running the calibration again overwrites this."),
+                                        wxString::FromUTF8(mat.material), tau, mat.cooling_time_const, mat.ideal_substrate_temp, mat.window_half_width, layer + 1, height);
+        if (bounded) msg += _L("\n\nThe fit hit its limit: the model cannot reach that layer temperature with any cooling constant, so check the measured height and the bed and chamber temperatures.");
+        MessageDialog(nullptr, msg, _L("Thermal Optimization"), wxOK | wxICON_INFORMATION).ShowModal();
         return;
     }
 
