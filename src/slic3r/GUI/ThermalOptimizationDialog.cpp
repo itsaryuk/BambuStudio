@@ -247,7 +247,8 @@ ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* paren
 }
 
 ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* parent, int original_time_seconds, int optimized_time_seconds,
-                                                                 const std::string& balance_grade, const std::string& consistency_grade)
+                                                                 const std::string& balance_grade, const std::string& consistency_grade,
+                                                                 const ThermalOptimizeSummary& summary)
     : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, TITLE, wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
     init(_L("Layer speeds rebalanced"));
@@ -259,6 +260,14 @@ ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* paren
     auto grade = [](const std::string& g) { return g == "HIGH" ? _L("High") : g == "MEDIUM" ? _L("Medium") : _L("Low"); };
     add_line(wxString::Format(_L("Thermal balance improvement: %s"), grade(balance_grade)));
     add_line(wxString::Format(_L("Thermal consistency improvement: %s"), grade(consistency_grade)));
+    if (summary.layers > 0) {
+        add_line(wxString::Format(_L("Mean thermal index %.2f → %.2f, spread %.2f → %.2f. Layers slowed down: %d of %d, sped up: %d."),
+                                  summary.mean_before, summary.mean_after, summary.std_before, summary.std_after, summary.slowed, summary.layers, summary.sped_up));
+        if (std::abs(summary.mean_before) < 0.2f && summary.std_before < 0.3f)
+            add_line(_L("The plate was already close to the comfort window, so there was little to rebalance; a low improvement grade is expected."));
+        else if (summary.slowed == summary.layers - 1 && summary.sped_up == 0)
+            add_line(_L("Every layer read hot, so all speeds were reduced as far as the limits and the preset minimum speed allow. If the plate was already slowed down by the filament's layer-time setting, little or nothing changes."));
+    }
     add_line(_L("The preview now shows the optimized G-code with its thermal index colour scheme."));
     finish(false);
 }

@@ -489,6 +489,7 @@ public:
     bool                    local_engine{false};
     ThermalMaterials        local_params;
     ThermalOptimizeOptions  local_options;
+    ThermalOptimizeSummary  local_summary;
 
     int                     action{-1}; // 0=simulation, 1=optimization
 

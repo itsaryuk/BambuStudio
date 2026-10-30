@@ -1307,8 +1307,9 @@ namespace Slic3r {
         {
             if (boost::algorithm::contains(comment, ";helioadditive=") || boost::algorithm::contains(comment, ";thermal=")) {
                 std::regex  regexPattern(R"(\bti\.max=(-?[0-9]*\.?[0-9]+),ti\.min=(-?[0-9]*\.?[0-9]+),ti\.mean=(-?[0-9]*\.?[0-9]+)\b)");
+                std::regex  compactPattern(R"(;thermal=(-?[0-9]*\.?[0-9]+),(-?[0-9]*\.?[0-9]+),(-?[0-9]*\.?[0-9]+))"); // max,min,mean
                 std::smatch match;
-                if (std::regex_search(comment, match, regexPattern)) {
+                if (std::regex_search(comment, match, regexPattern) || std::regex_search(comment, match, compactPattern)) {
                     float maxVal  = std::stof(match[1].str()) * 100.0;
                     float minVal  = std::stof(match[2].str()) * 100.0;
                     float meanVal = std::stof(match[3].str()) * 100.0;

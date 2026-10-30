@@ -2986,6 +2986,11 @@ void HelioBackgroundProcess::run_local_engine()
         ThermalReport after = ThermalQuality::simulate(*m_gcode_result, move_layers, local_params, &factors, &local_options);
         rating.qualityMeanImprovement = ThermalQuality::quality_grade(std::abs(report.mean), std::abs(after.mean));
         rating.qualityStdImprovement  = ThermalQuality::quality_grade(report.stddev, after.stddev);
+        local_summary = ThermalOptimizeSummary{report.mean, after.mean, report.stddev, after.stddev, int(factors.size()), 0, 0};
+        for (float x : factors) {
+            if (x < 0.999f) ++local_summary.slowed;
+            if (x > 1.001f) ++local_summary.sped_up;
+        }
         report   = std::move(after);
         out_path = create_path_for_optimization_gcode(filename);
     } else {

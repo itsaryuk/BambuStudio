@@ -195,7 +195,8 @@ TEST_CASE("Thermal quality: written G-code carries tags and rescaled feedrates",
         const int          L    = back.line_layers[i + 1];
         const bool extrusion    = orig.find(" E1") != std::string::npos;
         if (extrusion) {
-            REQUIRE(now.find(";thermal=ti.max=") != std::string::npos);
+            REQUIRE(now.find(";thermal=") != std::string::npos);
+            REQUIRE(now.rfind(";thermal=") == now.find(";thermal="));
             ++tagged;
         } else {
             REQUIRE(now.find(";thermal=") == std::string::npos);
@@ -215,6 +216,12 @@ TEST_CASE("Thermal quality: written G-code carries tags and rescaled feedrates",
     // The processor's tag parser reads our tag.
     bool is_thermal = false;
     auto ti = GCodeProcessor::parse_helioadditive_comment("G1 X1 Y1 E1 ;thermal=ti.max=0.50,ti.min=-0.25,ti.mean=0.10", is_thermal);
+    bool is_compact = false;
+    auto tc = GCodeProcessor::parse_helioadditive_comment("G1 X1 Y1 E1 ;thermal=0.50,-0.25,0.10", is_compact);
+    REQUIRE(is_compact);
+    REQUIRE(tc.max == Approx(ti.max));
+    REQUIRE(tc.min == Approx(ti.min));
+    REQUIRE(tc.mean == Approx(ti.mean));
     REQUIRE(is_thermal);
     REQUIRE(ti.max == Approx(50.f));
     REQUIRE(ti.min == Approx(-25.f));
@@ -284,9 +291,12 @@ TEST_CASE("Thermal quality: material classes, per-filament models, profile floor
     std::vector<float> fx(m.n_layers, 1.f);
     fx[3] = 2.f;
     ThermalReport rep = ThermalQuality::simulate(m.result, m.move_layers, pla_cold_bed(), &fx, &o);
-    double total = 0.;
+    m.result.moves[7].time[0] = 0.f; // the processor leaves the clock unset on some moves; that must not count as a jump
+    double total = 0., last_t = 0.;
     for (size_t i = 1; i < m.result.moves.size(); ++i) {
-        double dt = m.result.moves[i].time[0] - m.result.moves[i - 1].time[0];
+        const double t  = m.result.moves[i].time[0] > 0.f ? double(m.result.moves[i].time[0]) : last_t;
+        double       dt = std::max(0., t - last_t);
+        last_t          = t;
         if (m.move_layers[i] == 3 && ThermalQuality::eligible(m.result.moves[i], 3, o)) dt /= 2.;
         total += dt;
     }
@@ -349,4 +359,55 @@ TEST_CASE("Thermal quality: lateral conduction and preset-derived cooling", "[Th
     ThermalReport rep          = ThermalQuality::simulate(s.result, s.move_layers, hot_bed);
     REQUIRE(rep.layer_substrate_temp.size() == rep.layer_mean.size());
     REQUIRE(rep.layer_substrate_temp[0] == Approx(105.f).margin(1.f));
+}
+
+#include <cstdlib>
+#include "libslic3r/GCode/GCodeProcessor.hpp"
+
+// Hidden: THERMAL_GCODE=<file> ./thermal_quality_tests "[thermal_file]" runs the engine on a real file and prints what it did.
+TEST_CASE("run the engine on a real G-code file", "[.][thermal_file]")
+{
+    const char* path = std::getenv("THERMAL_GCODE");
+    if (path == nullptr) return;
+    GCodeProcessor proc;
+    proc.process_file(path);
+    const GCodeProcessorResult& r = proc.get_result();
+    ThermalGCodeText text;
+    REQUIRE(ThermalGCodeText::load(path, text));
+    const std::vector<int> layers = ThermalQuality::layers_of_moves(r, text.line_layers);
+    ThermalModelParams p = ThermalModelParams::for_material("PETG", -1.f);
+    p.min_speed = 20.f; p.max_volumetric = 21.f; p.bed_temp = 70.f;
+    ThermalMaterials       mats{p};
+    ThermalOptimizeOptions o;
+    ThermalReport          rep = ThermalQuality::simulate(r, layers, mats);
+    std::vector<float>     f   = ThermalQuality::optimize(r, layers, mats, o);
+    std::printf("moves=%zu lines=%zu last_time=%.1f s layers=%zu mean=%.2f stddev=%.2f outcome=%s\n", r.moves.size(), text.lines.size(),
+                r.moves.empty() ? 0.f : r.moves.back().time[0], f.size(), rep.mean, rep.stddev, rep.outcome.c_str());
+    float fmin = 9.f, fmax = 0.f;
+    for (float x : f) { fmin = std::min(fmin, x); fmax = std::max(fmax, x); }
+    std::printf("factor min %.3f max %.3f; first 6:", fmin, fmax);
+    for (size_t i = 0; i < std::min<size_t>(6, f.size()); ++i) std::printf(" %.3f", f[i]);
+    std::printf("\n");
+    double big = 0; size_t big_i = 0; int neg = 0;
+    for (size_t i = 1; i < r.moves.size(); ++i) {
+        const double dt = double(r.moves[i].time[0]) - double(r.moves[i - 1].time[0]);
+        if (dt < 0) ++neg;
+        if (dt > big) { big = dt; big_i = i; }
+    }
+    std::printf("largest dt %.1f s at move %zu (gcode line %u, type %d), negative dts %d\n", big, big_i, r.moves[big_i].gcode_id, int(r.moves[big_i].type), neg);
+    int shown_neg = 0;
+    for (size_t i = 1; i < r.moves.size() && shown_neg < 3; ++i)
+        if (double(r.moves[i].time[0]) < double(r.moves[i - 1].time[0])) {
+            ++shown_neg;
+            for (size_t j = (i >= 3 ? i - 3 : 0); j < std::min(i + 3, r.moves.size()); ++j)
+                std::printf("  move %zu type %d line %u layer %d t0 %.2f t1 %.2f layer_dur %.2f\n", j, int(r.moves[j].type), r.moves[j].gcode_id, layers[j], r.moves[j].time[0], r.moves[j].time[1], r.moves[j].layer_duration);
+            std::printf("  --\n");
+        }
+    std::printf("time_factor %.3f\n", ThermalQuality::time_factor(r, layers, f, o));
+    const std::string dst = std::string(path) + ".thermal_out.gcode";
+    REQUIRE(ThermalQuality::write_gcode(text, dst, r, layers, rep, &f, &o));
+    boost::nowide::ifstream in(dst.c_str());
+    std::string line; int shown = 0;
+    while (std::getline(in, line) && shown < 3)
+        if (line.rfind("M73 P", 0) == 0) { std::printf("%s\n", line.c_str()); ++shown; }
 }

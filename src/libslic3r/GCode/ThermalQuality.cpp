@@ -57,6 +57,7 @@ struct LineInfo
 {
     bool   motion{false};  // G0/G1/G2/G3
     bool   has_xy{false};
+    bool   has_e{false};
     size_t f_pos{std::string::npos}, f_len{0};
     double f{0.};
 };
@@ -77,6 +78,7 @@ LineInfo parse_line(const std::string& line)
     while (i < end) {
         char ch = line[i];
         if (ch == 'X' || ch == 'Y') info.has_xy = true;
+        if (ch == 'E') info.has_e = true;
         if (ch == 'F') {
             size_t s = i + 1;
             size_t e = s;
@@ -93,7 +95,8 @@ LineInfo parse_line(const std::string& line)
 std::string format_tag(const ThermalMoveIndex& t)
 {
     char buf[96];
-    std::snprintf(buf, sizeof(buf), " %sti.max=%.2f,ti.min=%.2f,ti.mean=%.2f", ThermalQuality::Tag, t.max, t.min, t.mean);
+    // Compact on purpose: printer firmware has a line buffer, and an arc move plus a long comment can exceed it.
+    std::snprintf(buf, sizeof(buf), " %s%.2f,%.2f,%.2f", ThermalQuality::Tag, t.max, t.min, t.mean);
     return buf;
 }
 
@@ -503,10 +506,13 @@ bool ThermalQuality::write_gcode(const ThermalGCodeText&       text,
     const bool          rescaled = layer_speed_factors != nullptr && options != nullptr;
     std::vector<double> scaled(result.moves.size(), 0.);
     std::vector<int>    line_any_move(text.lines.size() + 1, -1);
+    double last_t = 0.;
     for (size_t i = 1; i < result.moves.size(); ++i) {
         const auto& m  = result.moves[i];
         const int   L  = move_layers[i];
-        double      dt = std::max(0.f, m.time[0] - result.moves[i - 1].time[0]);
+        const double t = m.time[0] > 0.f ? double(m.time[0]) : last_t; // the processor leaves some moves at 0: carry the clock
+        double      dt = std::max(0., t - last_t);
+        last_t         = t;
         if (rescaled && L >= 0 && L < int(layer_speed_factors->size()) && eligible(m, L, *options)) dt /= std::max((*layer_speed_factors)[L], 0.05f);
         scaled[i] = scaled[i - 1] + dt;
         if (m.gcode_id < line_any_move.size()) line_any_move[m.gcode_id] = int(i);
@@ -520,6 +526,7 @@ bool ThermalQuality::write_gcode(const ThermalGCodeText&       text,
         const size_t    idx1 = i + 1;
         const LineInfo& info = infos[i];
         std::string     line = text.lines[i];
+        if (const size_t old_tag = line.find(std::string(" ") + Tag); old_tag != std::string::npos) line.erase(old_tag); // re-run: replace, never stack
         if (line_any_move[idx1] > last_move) last_move = line_any_move[idx1];
         if (rescaled && total_time > 0. && boost::starts_with(line, "M73 P") && line.find(" R") != std::string::npos) {
             const double elapsed = scaled[last_move];
@@ -530,7 +537,9 @@ bool ThermalQuality::write_gcode(const ThermalGCodeText&       text,
         if (info.motion && info.f_pos != std::string::npos && info.f > 0.) {
             // An F-only line applies to the next XY move; find it.
             size_t target = idx1;
-            if (!info.has_xy) {
+            if (!info.has_xy && info.has_e) {
+                target = 0; // retract / deretract speed: leave alone
+            } else if (!info.has_xy) {
                 target = 0;
                 for (size_t j = i + 1; j < text.lines.size() && j < i + 64; ++j)
                     if (infos[j].motion && infos[j].has_xy) { target = j + 1; break; }

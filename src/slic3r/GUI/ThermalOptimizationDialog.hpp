@@ -58,7 +58,8 @@ public:
                                     const std::vector<std::pair<ExtrusionRole, float>>& roles_times);
     // Optimization summary.
     ThermalOptimizationResultDialog(wxWindow* parent, int original_time_seconds, int optimized_time_seconds,
-                                    const std::string& balance_grade, const std::string& consistency_grade);
+                                    const std::string& balance_grade, const std::string& consistency_grade,
+                                    const ThermalOptimizeSummary& summary = ThermalOptimizeSummary());
 
     void on_dpi_changed(const wxRect& suggested_rect) override { Fit(); Refresh(); }
 

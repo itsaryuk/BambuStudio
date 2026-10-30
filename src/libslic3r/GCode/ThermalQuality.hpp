@@ -76,6 +76,13 @@ struct ThermalReport
 };
 
 // The sliced G-code text plus the layer every line belongs to.
+// What an optimization run did, for the summary dialog.
+struct ThermalOptimizeSummary
+{
+    float mean_before{0.f}, mean_after{0.f}, std_before{0.f}, std_after{0.f};
+    int   layers{0}, slowed{0}, sped_up{0};
+};
+
 struct ThermalGCodeText
 {
     std::vector<std::string> lines;       // without line terminators

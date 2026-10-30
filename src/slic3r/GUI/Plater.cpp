@@ -15638,7 +15638,7 @@ void Plater::priv::on_helio_processing_complete(HelioCompletionEvent &a)
             }
 
             if (helio_background_process.local_engine) {
-                ThermalOptimizationResultDialog dlg(nullptr, int(time_origin_value), int(time_optimized_value), a.quality_mean_improvement, a.quality_std_improvement);
+                ThermalOptimizationResultDialog dlg(nullptr, int(time_origin_value), int(time_optimized_value), a.quality_mean_improvement, a.quality_std_improvement, helio_background_process.local_summary);
                 dlg.ShowModal();
             } else {
                 HelioRatingDialog dlg(nullptr, time_origin_value, time_optimized_value, a.quality_mean_improvement, a.quality_std_improvement);
@@ -15831,17 +15831,25 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
     const DynamicPrintConfig& cfg   = wxGetApp().preset_bundle->full_config();
     const auto*               types = cfg.option<ConfigOptionStrings>("filament_type");
     const size_t              n_fil = std::max<size_t>(1, types != nullptr ? types->values.size() : 0);
+    // Options that vary per nozzle (max volumetric speed, nozzle temperature, ...) carry one row per filament and
+    // extruder variant (standard / high flow); the Print knows which row the installed nozzle uses.
+    Print* print = background_process.fff_print();
+    auto   row   = [&](const ConfigOptionVectorBase* opt, size_t f) -> size_t {
+        if (opt == nullptr || opt->size() <= n_fil || print == nullptr) return f;
+        const int r = print->get_filament_config_indx(int(f), 0);
+        return r >= 0 && size_t(r) < opt->size() ? size_t(r) : f;
+    };
     auto int_at = [&](const std::string& key, size_t f, int fallback) {
         const auto* opt = cfg.option<ConfigOptionInts>(key);
-        return opt != nullptr && !opt->values.empty() ? opt->get_at(f) : fallback;
+        return opt != nullptr && !opt->values.empty() ? opt->get_at(row(opt, f)) : fallback;
     };
     auto float_at = [&](const char* key, size_t f, float fallback) {
         const auto* opt = cfg.option<ConfigOptionFloats>(key);
-        return opt != nullptr && !opt->values.empty() ? float(opt->get_at(f)) : fallback;
+        return opt != nullptr && !opt->values.empty() ? float(opt->get_at(row(opt, f))) : fallback;
     };
     auto bool_at = [&](const char* key, size_t f) {
         const auto* opt = cfg.option<ConfigOptionBools>(key);
-        return opt != nullptr && !opt->values.empty() && opt->get_at(f);
+        return opt != nullptr && !opt->values.empty() && opt->get_at(row(opt, f));
     };
     auto printer_bool = [&](const char* key) {
         const auto* opt = cfg.option<ConfigOptionBool>(key);
