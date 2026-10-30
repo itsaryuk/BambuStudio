@@ -42,6 +42,14 @@ private:
     wxCheckBox*            m_keep_outer{nullptr};
 };
 
+// How to print, read and measure the calibration tower (photo plus steps).
+class ThermalCalibrationGuideDialog : public DPIDialog
+{
+public:
+    explicit ThermalCalibrationGuideDialog(wxWindow* parent);
+    void on_dpi_changed(const wxRect& suggested_rect) override { Fit(); Refresh(); }
+};
+
 class ThermalOptimizationResultDialog : public DPIDialog
 {
 public:

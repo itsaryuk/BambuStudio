@@ -21470,14 +21470,7 @@ void Plater::add_thermal_calibration_tower()
     wxGetApp().get_tab(Preset::TYPE_FILAMENT)->update_dirty();
     wxGetApp().get_tab(Preset::TYPE_FILAMENT)->reload_config();
 
-    MessageDialog(nullptr,
-        _L("Thermal calibration tower\n\n"
-           "1. Slice and print this cone with the filament you want to calibrate. Layer time shrinks towards the tip, so the material eventually runs hot.\n"
-           "2. On the printed part, measure the height where corners start rounding off or the surface sags.\n"
-           "3. With this sliced plate still open, press the Thermal Optimization button, choose Calibrate, enter that height and press Start.\n"
-           "4. The comfort window is stored per filament type and used automatically from then on. Running the calibration again overwrites it.\n\n"
-           "The filament preset's slow-down layer time was set to 0 for this test. Discard that change afterwards (or do not save the preset)."),
-        _L("Thermal Optimization"), wxOK | wxICON_INFORMATION).ShowModal();
+    ThermalCalibrationGuideDialog(nullptr).ShowModal();
 }
 
 void Plater::calib_temp(const Calib_Params &params)

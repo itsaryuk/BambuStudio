@@ -5,6 +5,7 @@
 
 #include <wx/sizer.h>
 #include <wx/stattext.h>
+#include <wx/statbmp.h>
 
 #include "Event.hpp"
 #include "GUI_App.hpp"
@@ -79,6 +80,9 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
         wxGetApp().plater()->CallAfter([]() { wxGetApp().plater()->add_thermal_calibration_tower(); });
     });
     calib_row->Add(tower, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
+    auto* guide = make_button(this, _L("How to read it"), false);
+    guide->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { ThermalCalibrationGuideDialog(this).ShowModal(); });
+    calib_row->Add(guide, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(6));
     sizer->Add(calib_row, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
     sizer->AddSpacer(pad);
     wxString materials;
@@ -154,6 +158,46 @@ ThermalOptimizeOptions ThermalOptimizationInputDialog::get_options() const
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+
+ThermalCalibrationGuideDialog::ThermalCalibrationGuideDialog(wxWindow* parent)
+    : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, _L("Thermal calibration tower"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
+{
+    SetBackgroundColour(*wxWHITE);
+    auto* outer = new wxBoxSizer(wxVERTICAL);
+    auto* body  = new wxBoxSizer(wxHORIZONTAL);
+
+    wxImage photo(from_u8(resources_dir() + "/images/thermal_calibration_tower.jpg"), wxBITMAP_TYPE_JPEG);
+    if (photo.IsOk()) {
+        const int h = FromDIP(380);
+        photo.Rescale(photo.GetWidth() * h / photo.GetHeight(), h, wxIMAGE_QUALITY_HIGH);
+        body->Add(new wxStaticBitmap(this, wxID_ANY, wxBitmap(photo)), 0, wxRIGHT, FromDIP(16));
+    }
+
+    auto* text = new wxBoxSizer(wxVERTICAL);
+    auto  para = [&](const wxString& t, bool bold = false) {
+        auto* l = new Label(this, bold ? Label::Head_13 : Label::Body_13, t, LB_AUTO_WRAP);
+        l->SetMinSize(wxSize(FromDIP(430), -1));
+        l->Wrap(FromDIP(430));
+        text->Add(l, 0, wxBOTTOM, FromDIP(bold ? 4 : 10));
+    };
+    para(_L("1. Print it"), true);
+    para(_L("Slice this cone with the filament you want to calibrate and print it. Layer time shrinks towards the tip, so at some height the material stops cooling enough before the next layer lands. The slow-down layer time of the filament preset was set to 0 for this test; discard that change afterwards."));
+    para(_L("2. Read it"), true);
+    para(_L("The lower part has crisp, even layer lines. Higher up the surface turns rough, pebbled or glossy, and near the tip the layers sag or the cone bends. The rough band is where each layer was laid on material that was still soft. The bent tip is the same effect at its extreme and is not the number to use."));
+    para(_L("3. Measure it"), true);
+    para(_L("With a caliper, measure from the bottom of the cone (not the brim) to the lowest height where the surface is rough all the way around, as marked by the line in the photo. If the change is gradual, take the height where it is clearly rough, not the first isolated bump."));
+    para(_L("4. Enter it"), true);
+    para(_L("With the sliced tower still open, press the Thermal Optimization button, choose Calibrate, enter that height and press Start. The comfort window is then stored for this filament type and used automatically. Running the calibration again overwrites it."));
+    body->Add(text, 1, wxEXPAND);
+
+    outer->Add(body, 1, wxEXPAND | wxALL, FromDIP(20));
+    auto* close = make_button(this, _L("Close"), true);
+    close->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
+    outer->Add(close, 0, wxALIGN_RIGHT | wxRIGHT | wxBOTTOM, FromDIP(20));
+    SetSizerAndFit(outer);
+    CenterOnParent();
+    wxGetApp().UpdateDlgDarkUI(this);
+}
 
 ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* parent, const ThermalReport& report, int original_time_seconds,
                                                                  const std::vector<std::pair<ExtrusionRole, float>>& roles_times)
