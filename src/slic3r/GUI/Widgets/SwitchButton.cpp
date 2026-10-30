@@ -539,7 +539,7 @@ void RichTooltipPopup::ShowAtPosition(wxWindow* anchor)
     pos.y += anchorSize.GetHeight() + FromDIP(4);
     
     SetPosition(pos);
-    Popup();
+    Show(); // Popup() grabs the pointer on GTK, so the next click dismisses the tip instead of hitting the button
 }
 
 ExpandButton::ExpandButton(wxWindow* parent,  std::string bmp, wxWindowID id, const wxPoint& pos, const wxSize& size)
