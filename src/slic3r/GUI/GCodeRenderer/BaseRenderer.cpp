@@ -3182,6 +3182,8 @@ namespace Slic3r
                     ImVec2 icon_size(16, 16);
                     IMTexture::load_from_svg_file(Slic3r::resources_dir() + "/images/helio_icon_dark.svg", icon_size.x, icon_size.y, m_helio_icon_dark_texture);
                     IMTexture::load_from_svg_file(Slic3r::resources_dir() + "/images/helio_icon.svg", icon_size.x, icon_size.y, m_helio_icon_texture);
+                    IMTexture::load_from_svg_file(Slic3r::resources_dir() + "/images/thermal_icon_dark.svg", icon_size.x, icon_size.y, m_thermal_icon_dark_texture);
+                    IMTexture::load_from_svg_file(Slic3r::resources_dir() + "/images/thermal_icon.svg", icon_size.x, icon_size.y, m_thermal_icon_texture);
                 }
             }
             // end helio
@@ -3257,7 +3259,8 @@ namespace Slic3r
                     view_type_items.push_back(EViewType::ThermalIndexMax);
                     view_type_items.push_back(EViewType::ThermalIndexMean);
                     for (int i = index; i < view_type_items.size(); i++) {
-                        ImageName temp = { get_view_type_string(view_type_items[i]), m_helio_icon_texture, m_helio_icon_dark_texture };
+                        const bool local = m_gcode_result != nullptr && m_gcode_result->is_local_thermal;
+                        ImageName temp = { get_view_type_string(view_type_items[i]), local ? m_thermal_icon_texture : m_helio_icon_texture, local ? m_thermal_icon_dark_texture : m_helio_icon_dark_texture };
                         view_type_image_names.push_back(temp);
                     }
                     view_type_items.push_back(EViewType::FilamentId);

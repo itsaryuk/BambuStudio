@@ -231,6 +231,8 @@ namespace Slic3r {
                 int m_last_back_process_status{ 0 };
                 ImTextureID m_helio_icon_dark_texture{ nullptr };
                 ImTextureID m_helio_icon_texture{ nullptr };
+                ImTextureID m_thermal_icon_dark_texture{ nullptr };
+                ImTextureID m_thermal_icon_texture{ nullptr };
                 bool m_show_horizontal_slider{ false };
                 // end helio
                 unsigned int m_last_result_id{ 0 };

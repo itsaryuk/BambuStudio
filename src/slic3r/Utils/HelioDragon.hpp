@@ -24,6 +24,7 @@
 #include "../GUI/BackgroundSlicingProcess.hpp"
 #include "../GUI/NotificationManager.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/GCode/ThermalQuality.hpp"
 #include "../GUI/GUI_Preview.hpp"
 #include "../GUI/Plater.hpp"
 #include "HelioRetryPolicy.hpp"
@@ -484,6 +485,11 @@ public:
     bool                    is_multi_material{false};
     bool                    use_v3{false}; // true when V3 multi-material path is active
 
+    // Built-in Thermal Optimization: runs the local layer-stack model instead of the cloud service.
+    bool                    local_engine{false};
+    ThermalModelParams      local_params;
+    ThermalOptimizeOptions  local_options;
+
     int                     action{-1}; // 0=simulation, 1=optimization
 
     /*task data*/
@@ -601,6 +607,7 @@ public:
         if (!begin_action())
             return false;
         m_gcode_processor.reset();
+        local_engine      = false;
         helio_origin_key  = api_key;
         helio_api_key     = "Bearer " + api_key;
         helio_api_url     = api_url;
@@ -630,6 +637,7 @@ public:
         if (!begin_action())
             return false;
         m_gcode_processor.reset();
+        local_engine           = false;
         helio_origin_key       = api_key;
         helio_api_key          = "Bearer " + api_key;
         helio_api_url          = api_url;
@@ -645,6 +653,31 @@ public:
         return true;
     }
 
+    bool init_local(Slic3r::GCodeProcessorResult* gcode_result, Slic3r::GUI::Preview* preview,
+                    const ThermalModelParams& params, const ThermalOptimizeOptions& options)
+    {
+        if (!begin_action())
+            return false;
+        m_gcode_processor.reset();
+        local_engine  = true;
+        local_params  = params;
+        local_options = options;
+        helio_origin_key.clear();
+        helio_api_key.clear();
+        helio_api_url.clear();
+        printer_id.clear();
+        filament_id.clear();
+        materials.clear();
+        use_v3 = is_multi_color = is_multi_material = false;
+        current_simulation_result.reset();
+        current_optimization_result.reset();
+        m_gcode_result    = gcode_result;
+        m_preview         = preview;
+        m_update_function = []() {};
+        return true;
+    }
+
+    void run_local_engine();
 
     void reset()
     {

@@ -570,6 +570,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/HelioReleaseNote.cpp
     GUI/HelioHistoryDialog.hpp
     GUI/HelioHistoryDialog.cpp
+    GUI/ThermalOptimizationDialog.hpp
+    GUI/ThermalOptimizationDialog.cpp
     GUI/BetaVersionDialog.hpp
     GUI/BetaVersionDialog.cpp
     GUI/SingleChoiceDialog.hpp

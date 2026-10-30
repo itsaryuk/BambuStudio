@@ -285,6 +285,7 @@ namespace Slic3r {
         bool support_traditional_timelapse{true};
         bool update_imgui_flag{false};
         bool is_helio_gcode{false};
+        bool is_local_thermal{false}; // thermal tags written by the built-in Thermal Optimization
         float printable_height;
         SettingsIds settings_ids;
         size_t filaments_count;
@@ -342,6 +343,7 @@ namespace Slic3r {
             support_material_on_wipe_tower = other.support_material_on_wipe_tower;
             update_imgui_flag         = other.update_imgui_flag;
             is_helio_gcode            = other.is_helio_gcode;
+            is_local_thermal          = other.is_local_thermal;
             long_retraction_when_cut = other.long_retraction_when_cut;
             timelapse_warning_code = other.timelapse_warning_code;
             support_traditional_timelapse = other.support_traditional_timelapse;
@@ -1193,6 +1195,7 @@ namespace Slic3r {
         ExtruderTemps m_extruder_temps;
         ThermalIndex m_thermal_index;
         bool m_is_helio_gcode{false};
+        bool m_is_local_thermal{false};
         int m_highest_bed_temp;
         float m_extruded_last_z;
         float m_first_layer_height; // mm
@@ -1302,7 +1305,7 @@ namespace Slic3r {
 
         static ThermalIndex parse_helioadditive_comment(const std::string comment,bool& is_helio)
         {
-            if (boost::algorithm::contains(comment, ";helioadditive=")) {
+            if (boost::algorithm::contains(comment, ";helioadditive=") || boost::algorithm::contains(comment, ";thermal=")) {
                 std::regex  regexPattern(R"(\bti\.max=(-?[0-9]*\.?[0-9]+),ti\.min=(-?[0-9]*\.?[0-9]+),ti\.mean=(-?[0-9]*\.?[0-9]+)\b)");
                 std::smatch match;
                 if (std::regex_search(comment, match, regexPattern)) {

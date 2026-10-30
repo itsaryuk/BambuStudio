@@ -2016,7 +2016,7 @@ wxBoxSizer* MainFrame::create_side_tools()
     /*helio*/
     split_line_icon = new wxStaticBitmap(this, wxID_ANY, create_scaled_bitmap("topbar_line", this, 22), wxDefaultPosition, wxSize(FromDIP(3), FromDIP(22)), 0);
     expand_program_holder = new ExpandButtonHolder(this);
-    expand_program_holder->addExpandButton(expand_helio_id, "helio_icon_topbar");
+    expand_program_holder->addExpandButton(expand_helio_id, wxGetApp().app_config->get("helio_enable") == "true" ? "helio_icon_topbar" : "thermal_icon_topbar");
     expand_program_holder->addExpandButton(expand_program_id, "expand_program");
     expand_program_holder->Bind(wxEXPAND_LEFT_DOWN, [=](const wxCommandEvent& e) {
 
@@ -2034,15 +2034,12 @@ wxBoxSizer* MainFrame::create_side_tools()
         }
         });
 
-    if (wxGetApp().app_config->get("helio_enable") == "true") {
-        expand_program_holder->ShowExpandButton(expand_helio_id, true);
-    }
-    else {
-        expand_program_holder->ShowExpandButton(expand_helio_id, false);
-    }
-
-    // Set tooltip for Helio expand button
-    expand_program_holder->SetExpandButtonRichTooltip(expand_helio_id, "monitor_speed", _L("Unlock faster, more reliable, warp-free prints with Helio Additive."));
+    // The built-in Thermal Optimization is always available; the cloud service only changes the icon and tooltip.
+    expand_program_holder->ShowExpandButton(expand_helio_id, true);
+    if (wxGetApp().app_config->get("helio_enable") == "true")
+        expand_program_holder->SetExpandButtonRichTooltip(expand_helio_id, "monitor_speed", _L("Unlock faster, more reliable, warp-free prints with Helio Additive."));
+    else
+        expand_program_holder->SetExpandButtonRichTooltip(expand_helio_id, "monitor_speed", _L("Thermal Optimization: check layer temperatures and rebalance speeds, free and offline."));
     // Set tooltip for program expand button (same tooltip as Helio for consistency)
     expand_program_holder->SetExpandButtonRichTooltip(expand_program_id, "monitor_speed", _L("Unlock faster, more reliable, warp-free prints with Helio Additive."));
 
@@ -2705,7 +2702,8 @@ void MainFrame::update_helio_button_state()
                                current_plate->is_slice_result_valid() && current_plate->can_slice() &&
                                !m_plater->sidebar().has_broken_mixed_filament() &&
                                !m_plater->is_background_process_slicing();
-    expand_program_holder->updateExpandButtonBitmap(expand_helio_id, helio_enabled ? "helio_icon_topbar" : "helio_icon_topbar_disable");
+    const std::string topbar_icon = wxGetApp().app_config->get("helio_enable") == "true" ? "helio_icon_topbar" : "thermal_icon_topbar";
+    expand_program_holder->updateExpandButtonBitmap(expand_helio_id, helio_enabled ? topbar_icon : topbar_icon + "_disable");
     expand_program_holder->EnableExpandButton(expand_helio_id, helio_enabled);
 }
 
