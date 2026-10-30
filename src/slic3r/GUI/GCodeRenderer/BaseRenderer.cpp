@@ -1761,7 +1761,7 @@ namespace Slic3r
                     }
                     m_last_helio_process_status = wxGetApp().plater()->get_helio_process_status();
                     m_show_horizontal_slider = false;
-                    if ((int)Slic3r::HelioBackgroundProcess::State::STATE_FINISHED == m_last_helio_process_status || (m_gcode_result->update_imgui_flag && m_gcode_result->is_helio_gcode)) {
+                    if (m_gcode_result->is_helio_gcode && ((int)Slic3r::HelioBackgroundProcess::State::STATE_FINISHED == m_last_helio_process_status || m_gcode_result->update_imgui_flag)) { // the process state stays FINISHED after a run, so a plain reslice must not bring the thermal entries back
                         update_thermal_options(true);
                         for (int i = 0; i < view_type_items.size(); i++) {
                             if (view_type_items[i] == EViewType::ThermalIndexMean) {
