@@ -73,7 +73,7 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     m_calib_height = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0., 300., 40., 0.5);
     calib_row->Add(m_calib_height, 0, wxALIGN_CENTER_VERTICAL);
     auto* tower = make_button(this, _L("Add calibration tower"), false);
-    tower->SetToolTip(_L("Opens a new project with a 30 mm cone: layers get shorter towards the top, so the material eventually runs hot. Print it with this filament, note the height where corners round off or the surface sags, then slice it again, open this dialog and enter that height."));
+    tower->SetToolTip(_L("Also in the Calibration menu as \"Thermal tower\", which works before anything is sliced. Opens a new project with a 30 mm cone: layers get shorter towards the top, so the material eventually runs hot. Print it with this filament, note the height where corners round off or the surface sags, then slice it again, open this dialog and enter that height."));
     tower->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         EndModal(wxID_CANCEL);
         wxGetApp().plater()->CallAfter([]() { wxGetApp().plater()->add_thermal_calibration_tower(); });

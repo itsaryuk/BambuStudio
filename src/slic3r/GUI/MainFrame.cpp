@@ -3668,6 +3668,9 @@ void MainFrame::init_menubar_as_editor()
                 m_temp_calib_dlg->ShowModal();
             }, "", nullptr,
             [this]() {return m_plater->is_view3D_shown();; }, this);
+        append_menu_item(m_topbar->GetCalibMenu(), wxID_ANY, _L("Thermal tower"), _L("Print a cone that runs hot towards the tip, then calibrate the Thermal Optimization comfort window for this filament"),
+            [this](wxCommandEvent&) { m_plater->add_thermal_calibration_tower(); }, "", nullptr,
+            [this]() { return m_plater->is_view3D_shown(); }, this);
         auto flowrate_menu = new wxMenu();
         append_menu_item(
             flowrate_menu, wxID_ANY, _L("Coarse"), _L("Flow rate test - Coarse"),
@@ -3749,6 +3752,9 @@ void MainFrame::init_menubar_as_editor()
         // SoftFever calibrations
     m_calib_menu = new wxMenu();
 
+    append_menu_item(m_calib_menu, wxID_ANY, _L("Thermal tower"), _L("Print a cone that runs hot towards the tip, then calibrate the Thermal Optimization comfort window for this filament"),
+        [this](wxCommandEvent&) { m_plater->add_thermal_calibration_tower(); }, "", nullptr,
+        [this]() { return m_plater->is_view3D_shown(); }, this);
     // Temp
     append_menu_item(
         m_calib_menu, wxID_ANY, _L("Temperature"), _L("Temperature"),
