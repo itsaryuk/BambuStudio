@@ -327,6 +327,8 @@ set(lisbslic3r_sources
     QuadricEdgeCollapse.cpp
     QuadricEdgeCollapse.hpp
     Semver.cpp
+    SettingsAdvisor.cpp
+    SettingsAdvisor.hpp
     ShortEdgeCollapse.cpp
     ShortEdgeCollapse.hpp
     ShortestPath.cpp

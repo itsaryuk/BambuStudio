@@ -520,6 +520,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/FilamentGroupPopup.cpp
     GUI/NotificationManager.cpp
     GUI/NotificationManager.hpp
+    GUI/SettingsAdvisorDialog.cpp
+    GUI/SettingsAdvisorDialog.hpp
     GUI/UnsavedChangesDialog.cpp
     GUI/UnsavedChangesDialog.hpp
     GUI/UserPresetsDialog.cpp

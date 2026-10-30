@@ -40,6 +40,7 @@
 #include "GLToolbar.hpp"
 #include "GUI_App.hpp"
 #include "GUI_ObjectList.hpp"
+#include "SettingsAdvisorDialog.hpp"
 #include "GUI_Colors.hpp"
 #include "Mouse3DController.hpp"
 #include "I18N.hpp"
@@ -7944,6 +7945,19 @@ bool GLCanvas3D::_init_main_toolbar()
                 if (agent) agent->track_update_property("auto_orient", std::to_string(++auto_orient_count));
             }
             };
+        if (!p_main_toolbar->add_item(item))
+            return false;
+
+        item.name = "settings_advisor";
+        item.icon_filename_callback = [](bool is_dark_mode)->std::string {
+            return is_dark_mode ? "toolbar_settings_advisor_dark.svg" : "toolbar_settings_advisor.svg";
+            };
+        item.tooltip = _utf8(L("Settings Advisor: analyze the plate and suggest print settings"));
+        item.sprite_id = sprite_id++;
+        item.left.render_callback = nullptr;
+        item.enabling_callback = []()->bool { return wxGetApp().plater()->can_do_ui_job(); };
+        item.left.toggable = false;
+        item.left.action_callback = [this]() { if (m_canvas != nullptr) run_settings_advisor(); };
         if (!p_main_toolbar->add_item(item))
             return false;
 
