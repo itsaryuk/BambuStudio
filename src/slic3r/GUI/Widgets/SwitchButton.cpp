@@ -595,10 +595,16 @@ void ExpandButton::SetRichTooltip(const wxString& iconName, const wxString& text
 {
     m_tooltip_icon = iconName;
     m_tooltip_text = text;
+#ifdef __WXGTK__
+    SetToolTip(text); // a popup window takes the input grab on Wayland and never gets the leave event that would dismiss it
+#endif
 }
 
 void ExpandButton::ShowRichTooltip()
 {
+#ifdef __WXGTK__
+    return;
+#endif
     if (m_tooltip_text.IsEmpty()) return;
     
     // Clean up any existing popup before creating a new one to prevent memory leaks
