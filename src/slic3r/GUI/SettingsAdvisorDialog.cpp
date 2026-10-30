@@ -185,6 +185,7 @@ void run_settings_advisor()
     {
         std::vector<indexed_triangle_set> meshes;
         std::vector<ObjectAnalysis>       objects; // name, index and overrides filled here, geometry on the worker
+        Model                             model;   // private copy for the pre-slice, objects[i] <-> model.objects[i]
         DynamicPrintConfig                full;
         std::vector<Suggestion>           result;
     };
@@ -212,6 +213,9 @@ void run_settings_advisor()
         a.overrides  = obj->config.get();
         input->objects.push_back(std::move(a));
         input->meshes.push_back(std::move(world.its));
+        ModelObject *copy = input->model.add_object(*obj);
+        copy->clear_instances();
+        copy->add_instance(*obj->instances[inst_idx]);
     }
     if (input->objects.empty()) {
         MessageDialog(plater, _L("There are no objects on the current plate."), _L("Settings Advisor"), wxOK).ShowModal();
@@ -232,6 +236,9 @@ void run_settings_advisor()
                 geometry.overrides  = std::move(input->objects[i].overrides);
                 input->objects[i]   = std::move(geometry);
             }
+            // Layer outlines give exact top / unsupported areas; skipped (mesh analysis only) for huge plates.
+            ctl.update_status(90, _u8L("Slicing layer outlines"));
+            preslice(input->model, input->full, input->objects, [&ctl] { return ctl.was_canceled(); });
         },
         [input, intent](bool canceled, std::exception_ptr &eptr) {
             if (canceled || eptr)

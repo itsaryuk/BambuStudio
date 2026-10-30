@@ -13,6 +13,8 @@
 #include "TriangleMesh.hpp"
 
 namespace Slic3r {
+class Model;
+
 namespace SettingsAdvisor {
 
 enum class Intent { Functional, Visual, FastDraft };
@@ -39,6 +41,12 @@ struct ObjectAnalysis
 
 // its must already be transformed to world coordinates. `canceled` is polled between chunks.
 ObjectAnalysis analyze_mesh(const indexed_triangle_set &its, const std::function<bool()> &canceled = {});
+
+// Slices `model` (a private copy: objects[i] analyses model.objects[i], one instance each) with `config`
+// up to the layer outlines only, on a temporary Print, and fills the sliced_* fields from consecutive
+// layers. Returns false if canceled or the model is too large to pre-slice quickly.
+bool preslice(const Model &model, DynamicPrintConfig config, std::vector<ObjectAnalysis> &objects,
+              const std::function<bool()> &canceled = {});
 
 struct Suggestion
 {

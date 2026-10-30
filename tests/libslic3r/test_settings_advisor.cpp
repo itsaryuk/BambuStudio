@@ -2,6 +2,7 @@
 
 #include "libslic3r/SettingsAdvisor.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/Model.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::SettingsAdvisor;
@@ -50,6 +51,35 @@ TEST_CASE("Mesh analysis measures basic geometry", "[SettingsAdvisor]")
         const ObjectAnalysis a = analyze_mesh(box(40, 0.8, 20));
         CHECK(a.min_wall == Approx(0.8).epsilon(0.05));
     }
+}
+
+TEST_CASE("Pre-slice measures unsupported and top areas from layer outlines", "[SettingsAdvisor]")
+{
+    indexed_triangle_set t = box(10, 10, 12, { 15, 15, 0 });
+    its_merge(t, box(40, 40, 3, { 0, 0, 12 }));
+    Model        model;
+    ModelObject *obj = model.add_object();
+    obj->name        = "tee";
+    obj->add_volume(TriangleMesh(t));
+    obj->add_instance();
+    obj->instances.front()->set_offset(Vec3d(100, 100, 0));
+
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    std::vector<ObjectAnalysis> objects(1);
+    REQUIRE(preslice(model, cfg, objects));
+    // The 40x40 plate overhangs the 10x10 pillar: ~1500 mm2 unsupported on its first layer.
+    CHECK(objects[0].sliced_overhang_area == Approx(1500.).epsilon(0.1));
+    CHECK(objects[0].sliced_max_top_area == Approx(1600.).epsilon(0.05));
+
+    // A plain cube has nothing unsupported.
+    Model        cube_model;
+    ModelObject *cube = cube_model.add_object();
+    cube->add_volume(TriangleMesh(box(20, 20, 20)));
+    cube->add_instance();
+    cube->instances.front()->set_offset(Vec3d(100, 100, 0));
+    std::vector<ObjectAnalysis> cube_objects(1);
+    REQUIRE(preslice(cube_model, cfg, cube_objects));
+    CHECK(cube_objects[0].sliced_overhang_area == Approx(0.).margin(1.));
 }
 
 TEST_CASE("Rules suggest settings for the intent and geometry", "[SettingsAdvisor]")

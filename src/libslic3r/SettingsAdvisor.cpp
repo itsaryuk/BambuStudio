@@ -7,6 +7,10 @@
 #include <boost/format.hpp>
 
 #include "AABBMesh.hpp"
+#include "ClipperUtils.hpp"
+#include "Layer.hpp"
+#include "Model.hpp"
+#include "Print.hpp"
 
 namespace Slic3r {
 namespace SettingsAdvisor {
@@ -95,6 +99,57 @@ ObjectAnalysis analyze_mesh(const indexed_triangle_set &its, const std::function
         out.min_wall = thickness[k];
     }
     return out;
+}
+
+// Above this many triangles on the plate the pre-slice is skipped and mesh analysis alone is used.
+static constexpr size_t PRESLICE_MAX_TRIANGLES = 2000000;
+
+bool preslice(const Model &model, DynamicPrintConfig config, std::vector<ObjectAnalysis> &objects, const std::function<bool()> &canceled)
+{
+    size_t triangles = 0;
+    for (const ModelObject *obj : model.objects)
+        for (const ModelVolume *vol : obj->volumes)
+            triangles += vol->mesh().its.indices.size();
+    if (model.objects.size() != objects.size() || triangles > PRESLICE_MAX_TRIANGLES)
+        return false;
+
+    // Only the layer outlines are needed: switch off everything that would add work or global state.
+    config.set_deserialize_strict("enable_support", "0");
+    config.set_deserialize_strict("raft_layers", "0");
+    config.set_deserialize_strict("enable_prime_tower", "0");
+    config.set_deserialize_strict("spiral_mode", "0");
+    config.set_deserialize_strict("brim_type", "no_brim");
+
+    Print print;
+    print.apply(model, config);
+    const auto  *nozzles = config.option<ConfigOptionFloats>("nozzle_diameter");
+    const double nozzle  = nozzles && !nozzles->values.empty() ? nozzles->values.front() : 0.4;
+    // A layer may stick out this far past the one below and still be carried by the wall underneath.
+    const float  carried = float(scale_(0.5 * nozzle));
+    const double mm2     = SCALING_FACTOR * SCALING_FACTOR;
+
+    for (PrintObject *po : print.objects_mutable()) {
+        if (canceled && canceled())
+            return false;
+        auto it = std::find_if(model.objects.begin(), model.objects.end(),
+                               [po](const ModelObject *mo) { return mo->id() == po->model_object()->id(); });
+        if (it == model.objects.end())
+            continue;
+        ObjectAnalysis &out = objects[it - model.objects.begin()];
+        po->slice();
+        double max_top = 0., unsupported = 0.;
+        for (const Layer *layer : po->layers()) {
+            if (layer->upper_layer)
+                max_top = std::max(max_top, area(diff_ex(layer->lslices, layer->upper_layer->lslices)) * mm2);
+            else
+                max_top = std::max(max_top, area(layer->lslices) * mm2);
+            if (layer->lower_layer)
+                unsupported += area(diff_ex(layer->lslices, expand(to_polygons(layer->lower_layer->lslices), carried))) * mm2;
+        }
+        out.sliced_max_top_area  = max_top;
+        out.sliced_overhang_area = unsupported;
+    }
+    return !(canceled && canceled());
 }
 
 namespace {
@@ -220,7 +275,7 @@ std::vector<Suggestion> suggest(const std::vector<ObjectAnalysis> &objects, Inte
     }
     if (worst_overhang) {
         plate("enable_support", "1",
-              (boost::format("'%1%' has %2% mm2 of overhang flatter than 30 deg") % worst_overhang->name %
+              (boost::format("'%1%' has %2% mm2 of unsupported overhang") % worst_overhang->name %
                int(std::max(worst_overhang->steep_overhang_area, worst_overhang->sliced_overhang_area))).str());
         if (intent != Intent::Functional)
             plate("support_type", "tree(auto)", "tree supports leave fewer marks and are easier to remove");
