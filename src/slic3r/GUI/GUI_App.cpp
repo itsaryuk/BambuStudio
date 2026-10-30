@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <ctime>
 #include <exception>
 #include <cstdlib>
 #include <chrono>
@@ -389,6 +390,27 @@ public:
         memDc.SetFont(m_constant_text.title_font);
         memDc.DrawLabel(versionText, internal_sign_rect, wxALIGN_TOP | wxALIGN_LEFT);
 #endif
+
+        // fork branding: tagline plus a quip that changes every launch
+        {
+            static const char* quips[] = {
+                "Now with 100% more thermodynamics.",
+                "Warps less. Brags more.",
+                "Your layers called. They want to be the same temperature.",
+                "Side effects may include faster prints.",
+                "Slices like Bambu Studio. Sweats like a gym rat.",
+                "No cloud was harmed in the making of this G-code.",
+                "Leg day for your hotend.",
+            };
+            wxRect tag_rect(wxPoint(0, title_rect.GetBottom() + text_padding * 2), wxSize(width, FromDIP(24 * m_scale)));
+            memDc.SetFont(Label::Head_16);
+            memDc.SetTextForeground(wxColour(0, 174, 66));
+            memDc.DrawLabel("ON STEROIDS", tag_rect, wxALIGN_CENTER);
+            tag_rect.Offset(0, tag_rect.GetHeight());
+            memDc.SetFont(Label::Body_13);
+            memDc.SetTextForeground(StateColor::darkModeColorFor(wxColor(134, 134, 134)));
+            memDc.DrawLabel(quips[std::time(nullptr) % std::size(quips)], tag_rect, wxALIGN_CENTER);
+        }
 
         // load bitmap for logo
         BitmapCache bmp_cache;
