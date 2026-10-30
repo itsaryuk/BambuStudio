@@ -19,12 +19,30 @@ using MoveVertex = GCodeProcessorResult::MoveVertex;
 
 namespace {
 
-struct Cell
+struct Deposit
 {
     float t{-1.f};     // deposit time
     float temp{0.f};   // temperature right after deposit
     float tau{1.f};    // cooling time constant at deposit
     int   layer{-1};
+};
+
+// The latest deposit and the one from the layer before it: a second wall laid beside the first in the same cell
+// must not pass for the substrate underneath.
+struct Cell
+{
+    Deposit cur, prev;
+    void    put(const Deposit& d)
+    {
+        if (cur.layer != d.layer) prev = cur;
+        cur = d;
+    }
+    const Deposit* below(int L) const
+    {
+        if (L < 1) return nullptr; // the bed is handled by the caller
+        return cur.layer == L ? (prev.layer == L - 1 ? &prev : nullptr) : (cur.layer == L - 1 ? &cur : nullptr);
+    }
+    const Deposit* beside(int L) const { return cur.layer >= 0 && (cur.layer == L || cur.layer == L - 1) ? &cur : nullptr; }
 };
 
 float env_temp(const ThermalModelParams& p, float z)
@@ -229,6 +247,35 @@ bool ThermalQuality::eligible(const MoveVertex& m, int layer, const ThermalOptim
            optimizable_role(m.extrusion_role, o.keep_outer_walls);
 }
 
+std::vector<double> ThermalQuality::move_durations(const GCodeProcessorResult& result, const std::vector<int>& move_layers)
+{
+    const auto&         moves = result.moves;
+    std::vector<double> g(moves.size(), 0.);
+    int                 n_layers = 0;
+    for (int L : move_layers) n_layers = std::max(n_layers, L + 1);
+    std::vector<double> geo(n_layers, 0.), dur(n_layers, 0.);
+    for (size_t i = 1; i < moves.size(); ++i) {
+        const MoveVertex& m   = moves[i];
+        float             len = 0.f;
+        Vec3f             prev = moves[i - 1].position;
+        for (const Vec3f& p : m.interpolation_points) { len += (p - prev).norm(); prev = p; }
+        len += (m.position - prev).norm();
+        if (m.feedrate > 0.f) g[i] = len / m.feedrate;
+        const int L = move_layers[i];
+        if (L >= 0) { geo[L] += g[i]; dur[L] = std::max(dur[L], double(m.layer_duration)); }
+    }
+    double last_t = 0.;
+    for (size_t i = 1; i < moves.size(); ++i) {
+        const int    L = move_layers[i];
+        const double t = moves[i].time[0] > 0.f ? double(moves[i].time[0]) : last_t;
+        const double clock_dt = std::max(0., t - last_t);
+        last_t                = t;
+        if (L >= 0 && dur[L] > 0. && geo[L] > 0.) g[i] *= dur[L] / geo[L];
+        else g[i] = clock_dt;
+    }
+    return g;
+}
+
 ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
                                        const std::vector<int>&       move_layers,
                                        const ThermalMaterials&       materials,
@@ -270,11 +317,12 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
     std::vector<double> layer_sum(n_layers, 0.), layer_time(n_layers, 0.), layer_temp(n_layers, 0.);
     double sum = 0., sum2 = 0., total = 0., hot = 0., cold = 0.;
 
+    const std::vector<double> durations = move_durations(result, move_layers);
     double now = 0.;
     for (size_t i = 1; i < moves.size(); ++i) {
         const MoveVertex& m = moves[i];
         const int L = move_layers[i];
-        double dt = std::max(0.f, m.time[0] - moves[i - 1].time[0]);
+        double dt = durations[i];
         if (layer_speed_factors != nullptr && eligibility != nullptr && L >= 0 && L < int(layer_speed_factors->size()) &&
             eligible(m, L, *eligibility))
             dt /= std::max((*layer_speed_factors)[L], 0.05f);
@@ -297,11 +345,10 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
         const float t_env   = env_temp(params, m.position.z());
         const float tau     = cooling_tau(mat, m);
         const float t_noz   = m.temperature > 0.f ? m.temperature : 200.f;
-        float       mn = 1e9f, mx = -1e9f;
-        double      acc = 0., acc_temp = 0.;
-        int         cnt = 0;
-        auto        decayed   = [&](const Cell& k, float t_s) { return t_env + (k.temp - t_env) * std::exp(-std::max(t_s - k.t, 0.f) / k.tau); };
-        auto        deposited = [&](const Cell& k) { return k.layer >= 0 && (k.layer == L || k.layer == L - 1); };
+        float       mn = 1e9f, mx = -1e9f, mn_all = 1e9f, mx_all = -1e9f;
+        double      acc = 0., acc_temp = 0., acc_all = 0.;
+        int         cnt = 0, cnt_all = 0; // cnt: samples with a substrate (previous layer or bed); air under a crossing or bridge is not rated
+        auto        decayed   = [&](const Deposit& k, float t_s) { return t_env + (k.temp - t_env) * std::exp(-std::max(t_s - k.t, 0.f) / k.tau); };
         float       walked = 0.f;
         for (size_t k = 1; k < pts.size(); ++k) {
             const Vec2f a = pts[k - 1].head<2>(), b = pts[k].head<2>();
@@ -315,33 +362,41 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
                 cell_index(p.x(), p.y(), cx, cy);
                 Cell& c = cells[size_t(cy) * nx + cx];
                 float t_sub;
-                if (deposited(c)) {
+                bool  substrate = true;
+                if (const Deposit* under = c.below(L); under != nullptr) {
                     // Lateral conduction: a neighbour counts once heat laid there has had time to cross the distance.
-                    double acc_t = 2. * decayed(c, t_s); // the spot itself counts double
+                    double acc_t = 2. * decayed(*under, t_s); // the spot itself counts double
                     int    cnt_t = 2;
                     for (int dy = -2; dy <= 2; ++dy)
                         for (int dx = -2; dx <= 2; ++dx) {
                             if (dx == 0 && dy == 0) continue;
                             const int x = cx + dx, y = cy + dy;
                             if (x < 0 || y < 0 || x >= nx || y >= ny) continue;
-                            const Cell& k = cells[size_t(y) * nx + x];
-                            if (!deposited(k)) continue;
-                            if (std::sqrt(mat.diffusivity * std::max(t_s - k.t, 0.f)) < std::hypot(float(dx), float(dy)) * cell) continue;
-                            acc_t += decayed(k, t_s);
+                            const Deposit* k = cells[size_t(y) * nx + x].beside(L);
+                            if (k == nullptr) continue;
+                            if (std::sqrt(mat.diffusivity * std::max(t_s - k->t, 0.f)) < std::hypot(float(dx), float(dy)) * cell) continue;
+                            acc_t += decayed(*k, t_s);
                             ++cnt_t;
                         }
                     t_sub = float(acc_t / cnt_t);
-                } else
-                    t_sub = (L == 0) ? params.bed_temp : t_env; // bed, or air under an overhang/bridge
+                } else {
+                    t_sub     = (L == 0) ? params.bed_temp : t_env; // bed, or air under an overhang, bridge or sparse-infill crossing
+                    substrate = L == 0;
+                }
                 const float idx = std::clamp((t_sub - mid) / half, -1.f, 1.f);
-                mn = std::min(mn, idx); mx = std::max(mx, idx); acc += idx; acc_temp += t_sub; ++cnt;
-                c.t = t_s; c.temp = mat.deposit_mix * t_noz + (1.f - mat.deposit_mix) * t_sub; c.tau = tau; c.layer = L;
+                mn_all = std::min(mn_all, idx); mx_all = std::max(mx_all, idx); acc_all += idx; ++cnt_all;
+                if (substrate) { mn = std::min(mn, idx); mx = std::max(mx, idx); acc += idx; acc_temp += t_sub; ++cnt; }
+                c.put(Deposit{t_s, mat.deposit_mix * t_noz + (1.f - mat.deposit_mix) * t_sub, tau, L});
             }
             walked += len;
         }
         ThermalMoveIndex& out = rep.moves[i];
-        out.min = mn; out.max = mx; out.mean = float(acc / std::max(cnt, 1));
-        layer_sum[L] += out.mean * dt; layer_time[L] += dt; layer_temp[L] += acc_temp / std::max(cnt, 1) * dt;
+        if (cnt == 0) { // nothing underneath: tag it for the preview, but it carries no weight in the statistics
+            out.min = mn_all; out.max = mx_all; out.mean = float(acc_all / std::max(cnt_all, 1));
+            continue;
+        }
+        out.min = mn; out.max = mx; out.mean = float(acc / cnt);
+        layer_sum[L] += out.mean * dt; layer_time[L] += dt; layer_temp[L] += acc_temp / cnt * dt;
         sum += out.mean * dt; sum2 += double(out.mean) * out.mean * dt; total += dt;
         if (out.mean > 0.8f) hot += dt;
         if (out.mean < -0.8f) cold += dt;
@@ -465,11 +520,12 @@ float ThermalQuality::time_factor(const GCodeProcessorResult& result, const std:
                                   const std::vector<float>& layer_speed_factors, const ThermalOptimizeOptions& options)
 {
     double before = 0., after = 0.;
+    const std::vector<double> durations = move_durations(result, move_layers);
     for (size_t i = 1; i < result.moves.size(); ++i) {
         const auto& m = result.moves[i];
         const int   L = move_layers[i];
         if (L < 0 || L >= int(layer_speed_factors.size()) || !eligible(m, L, options)) continue;
-        const double dt = std::max(0.f, m.time[0] - result.moves[i - 1].time[0]);
+        const double dt = durations[i];
         before += dt;
         after += dt / std::max(layer_speed_factors[L], 0.05f);
     }
@@ -506,13 +562,11 @@ bool ThermalQuality::write_gcode(const ThermalGCodeText&       text,
     const bool          rescaled = layer_speed_factors != nullptr && options != nullptr;
     std::vector<double> scaled(result.moves.size(), 0.);
     std::vector<int>    line_any_move(text.lines.size() + 1, -1);
-    double last_t = 0.;
+    const std::vector<double> durations = move_durations(result, move_layers);
     for (size_t i = 1; i < result.moves.size(); ++i) {
         const auto& m  = result.moves[i];
         const int   L  = move_layers[i];
-        const double t = m.time[0] > 0.f ? double(m.time[0]) : last_t; // the processor leaves some moves at 0: carry the clock
-        double      dt = std::max(0., t - last_t);
-        last_t         = t;
+        double      dt = durations[i];
         if (rescaled && L >= 0 && L < int(layer_speed_factors->size()) && eligible(m, L, *options)) dt /= std::max((*layer_speed_factors)[L], 0.05f);
         scaled[i] = scaled[i - 1] + dt;
         if (m.gcode_id < line_any_move.size()) line_any_move[m.gcode_id] = int(i);

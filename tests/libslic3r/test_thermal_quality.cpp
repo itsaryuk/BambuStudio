@@ -426,6 +426,23 @@ TEST_CASE("run the engine on a real G-code file", "[.][thermal_file]")
             std::printf("  --\n");
         }
     std::printf("time_factor %.3f\n", ThermalQuality::time_factor(r, layers, f, o));
+    if (const char* h = std::getenv("THERMAL_CALIB_HEIGHT")) { // emulate Calibrate at that height, then optimize with the fitted constant
+        const float height = float(std::atof(h));
+        int cal_layer = -1, slot = 0;
+        for (size_t i = 1; i < r.moves.size(); ++i)
+            if (r.moves[i].type == EMoveType::Extrude && layers[i] >= 0 && r.moves[i].position.z() >= height) { cal_layer = layers[i]; slot = r.moves[i].extruder_id; break; }
+        bool bounded = false;
+        const float target = mats[0].ideal_substrate_temp + 0.8f * mats[0].window_half_width;
+        const float tau    = ThermalQuality::fit_cooling_constant(r, layers, mats, slot, cal_layer, target, &bounded);
+        std::printf("calibrate: layer %d target %.1f C -> tau %.2f s (class %.2f) bounded %d\n", cal_layer, target, tau, mats[0].cooling_time_const, int(bounded));
+        mats[0].cooling_time_const = tau;
+        const ThermalReport before = ThermalQuality::simulate(r, layers, mats);
+        f = ThermalQuality::optimize(r, layers, mats, o);
+        const ThermalReport after = ThermalQuality::simulate(r, layers, mats, &f, &o);
+        std::printf("mean %.2f -> %.2f, stddev %.2f -> %.2f, time_factor %.3f\n", before.mean, after.mean, before.stddev, after.stddev, ThermalQuality::time_factor(r, layers, f, o));
+        for (size_t L = 0; L < f.size(); L += 10)
+            std::printf("  layer %3zu  mean before %+.2f after %+.2f  factor %.2f\n", L, before.layer_mean[L], after.layer_mean[L], f[L]);
+    }
     for (size_t L = f.size() >= 16 ? f.size() - 16 : 0; L < f.size(); ++L) {
         std::map<int, int> roles; int eligible = 0;
         for (size_t i = 0; i < r.moves.size(); ++i)

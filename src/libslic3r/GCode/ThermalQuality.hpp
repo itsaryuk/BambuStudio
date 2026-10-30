@@ -95,6 +95,11 @@ class ThermalQuality
 public:
     static std::vector<int> layers_of_moves(const GCodeProcessorResult& result, const std::vector<int>& line_layers);
 
+    // Seconds per move. The processor's per-move clock is whole seconds and unset on many moves, so the duration
+    // is length / feedrate, scaled per layer to the processor's layer time (which includes acceleration); layers
+    // without one fall back to the clock differences.
+    static std::vector<double> move_durations(const GCodeProcessorResult& result, const std::vector<int>& move_layers);
+
     static ThermalReport simulate(const GCodeProcessorResult&    result,
                                   const std::vector<int>&        move_layers,
                                   const ThermalMaterials&        materials,
