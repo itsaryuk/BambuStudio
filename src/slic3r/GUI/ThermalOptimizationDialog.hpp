@@ -46,7 +46,8 @@ private:
 class ThermalCalibrationGuideDialog : public DPIDialog
 {
 public:
-    explicit ThermalCalibrationGuideDialog(wxWindow* parent);
+    // slow_down_was: the filament preset's slow-down layer time before the tower set it to 0 (-1: not changed now).
+    explicit ThermalCalibrationGuideDialog(wxWindow* parent, int slow_down_was = -1);
     void on_dpi_changed(const wxRect& suggested_rect) override { Fit(); Refresh(); }
 };
 

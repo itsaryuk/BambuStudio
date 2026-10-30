@@ -15908,6 +15908,12 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
             MessageDialog(nullptr, _L("No layer at that height in the sliced plate."), _L("Thermal Optimization"), wxOK | wxICON_WARNING).ShowModal();
             return;
         }
+        // A layer-time slow-down hides the heat build-up the tower is meant to show; the slice is only valid with the current presets.
+        if (const int slow_down = int_at("slow_down_layer_time", size_t(std::max(slot, 0)), 0); slow_down > 0) {
+            MessageDialog(nullptr, wxString::Format(_L("This plate was sliced with the filament's slow-down layer time at %d s, so the slicer throttled the small layers and the tower did not run as hot as it should. Set \"Slow down layer time\" (Filament → Cooling) to 0, slice and print the tower again, then calibrate."), slow_down),
+                          _L("Thermal Optimization"), wxOK | wxICON_WARNING).ShowModal();
+            return;
+        }
         const ThermalModelParams& mat   = slot < int(mats.size()) ? mats[slot] : mats.front();
         const float               t_sub = report.layer_substrate_temp[layer];
         const std::string         type  = boost::to_upper_copy(types != nullptr && slot < int(types->values.size()) ? types->values[slot] : std::string());
@@ -21474,11 +21480,13 @@ void Plater::add_thermal_calibration_tower()
 
     // The preset's slow-down would hide the effect we want to see; the model reads the real layer times anyway.
     auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
+    const auto* sd_opt   = filament_config->option<ConfigOptionInts>("slow_down_layer_time");
+    const int   sd_was   = sd_opt != nullptr && !sd_opt->values.empty() ? sd_opt->values.front() : 0;
     set_config_values<int, ConfigOptionInts>(filament_config, "slow_down_layer_time", 0);
     wxGetApp().get_tab(Preset::TYPE_FILAMENT)->update_dirty();
     wxGetApp().get_tab(Preset::TYPE_FILAMENT)->reload_config();
 
-    ThermalCalibrationGuideDialog(nullptr).ShowModal();
+    ThermalCalibrationGuideDialog(nullptr, sd_was).ShowModal();
 }
 
 void Plater::calib_temp(const Calib_Params &params)

@@ -159,7 +159,7 @@ ThermalOptimizeOptions ThermalOptimizationInputDialog::get_options() const
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-ThermalCalibrationGuideDialog::ThermalCalibrationGuideDialog(wxWindow* parent)
+ThermalCalibrationGuideDialog::ThermalCalibrationGuideDialog(wxWindow* parent, int slow_down_was)
     : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, _L("Thermal calibration tower"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
     SetBackgroundColour(*wxWHITE);
@@ -181,7 +181,13 @@ ThermalCalibrationGuideDialog::ThermalCalibrationGuideDialog(wxWindow* parent)
         text->Add(l, 0, wxBOTTOM, FromDIP(bold ? 4 : 10));
     };
     para(_L("1. Print it"), true);
-    para(_L("Slice this cone with the filament you want to calibrate and print it. Layer time shrinks towards the tip, so at some height the material stops cooling enough before the next layer lands. The slow-down layer time of the filament preset was set to 0 for this test; discard that change afterwards."));
+    para(_L("Slice this cone with the filament you want to calibrate and print it. Layer time shrinks towards the tip, so at some height the material stops cooling enough before the next layer lands."));
+    if (slow_down_was > 0)
+        para(wxString::Format(_L("Slow down layer time (Filament → Cooling) was %d s and has been set to 0 on the loaded filament so the slicer does not throttle the small layers. If you switch to another filament preset before slicing, set it to 0 there too. Discard the preset change after printing the tower."), slow_down_was), true);
+    else if (slow_down_was == 0)
+        para(_L("Slow down layer time (Filament → Cooling) is 0 on the loaded filament, as the tower needs. Keep it at 0 if you switch filament presets before slicing."), true);
+    else
+        para(_L("Slow down layer time (Filament → Cooling) must be 0 when slicing the tower, or the slicer throttles the small layers and hides the heat build-up. Calibrate refuses a tower sliced with it on."), true);
     para(_L("2. Read it"), true);
     para(_L("The lower part has crisp, even layer lines. Higher up the surface turns rough, pebbled or glossy, and near the tip the layers sag or the cone bends. The rough band is where each layer was laid on material that was still soft. The bent tip is the same effect at its extreme and is not the number to use."));
     para(_L("3. Measure it"), true);
