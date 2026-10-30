@@ -21,7 +21,8 @@ class ThermalOptimizationInputDialog : public DPIDialog
 public:
     ThermalOptimizationInputDialog(wxWindow* parent, const ThermalMaterials& params, const ThermalOptimizeOptions& options, bool preselect_optimize);
 
-    int                    get_action() const { return m_optimize->GetValue() ? 1 : 0; } // 0 analyze, 1 optimize
+    int                    get_action() const { return m_optimize->GetValue() ? 1 : m_calibrate->GetValue() ? 2 : 0; } // 0 analyze, 1 optimize, 2 calibrate
+    float                  get_calibration_height() const;
     ThermalMaterials       get_params() const;
     ThermalOptimizeOptions get_options() const;
 
@@ -32,6 +33,8 @@ private:
     ThermalOptimizeOptions m_options;
     wxRadioButton*         m_analyze{nullptr};
     wxRadioButton*         m_optimize{nullptr};
+    wxRadioButton*         m_calibrate{nullptr};
+    wxSpinCtrlDouble*      m_calib_height{nullptr};
     wxSpinCtrl*            m_chamber{nullptr};
     wxSpinCtrl*            m_speed_up{nullptr};
     wxSpinCtrl*            m_slow_down{nullptr};

@@ -301,3 +301,52 @@ TEST_CASE("Thermal quality: material classes, per-filament models, profile floor
     REQUIRE(back.lines.back() == "M73 P100 R0");
     REQUIRE(total < m.result.moves.back().time[0]); // the rescaled timeline really is shorter
 }
+
+TEST_CASE("Thermal quality: lateral conduction and preset-derived cooling", "[ThermalQuality]")
+{
+    // A cold line laid next to a line that is still hot reads warmer when heat may cross between cells.
+    GCodeProcessorResult result;
+    std::vector<int>     layers;
+    float                now = 0.f;
+    auto add = [&](EMoveType type, Vec3f pos, float dt, int layer) {
+        GCodeProcessorResult::MoveVertex m;
+        m.type = type; m.extrusion_role = type == EMoveType::Extrude ? erInternalInfill : erNone; m.position = pos;
+        m.feedrate = 30.f; m.width = 0.42f; m.height = 0.2f; m.mm3_per_mm = 0.084f; m.fan_speed = 0.f; m.temperature = 220.f;
+        now += dt; m.time = {now, now}; m.gcode_id = (unsigned int) result.moves.size() + 1;
+        result.moves.push_back(m); layers.push_back(layer);
+    };
+    result.moves.push_back({}); layers.push_back(-1);
+    // layer 0: two lines, y = 0 and y = 1, long ago
+    add(EMoveType::Travel, Vec3f(0, 0, 0.2f), 1.f, 0); add(EMoveType::Extrude, Vec3f(20, 0, 0.2f), 1.f, 0);
+    add(EMoveType::Travel, Vec3f(0, 1, 0.2f), 1.f, 0); add(EMoveType::Extrude, Vec3f(20, 1, 0.2f), 1.f, 0);
+    add(EMoveType::Travel, Vec3f(0, 0, 0.4f), 300.f, 1); // everything cold now
+    add(EMoveType::Extrude, Vec3f(20, 0, 0.4f), 1.f, 1); // hot line at y = 0
+    add(EMoveType::Travel, Vec3f(0, 1, 0.4f), 15.f, 1);  // 15 s: heat has crossed sqrt(0.1 * 15) = 1.2 mm
+    add(EMoveType::Extrude, Vec3f(20, 1, 0.4f), 1.f, 1); // laid 1 mm away, on a cold layer-0 cell
+    ThermalModelParams p = pla_cold_bed();
+    p.cooling_time_const = 30.f; // slow cooling so the first line is still clearly warm after 15 s
+    ThermalModelParams no_conduction = p; no_conduction.diffusivity = 0.f;
+    const size_t probe = result.moves.size() - 1;
+    REQUIRE(ThermalQuality::simulate(result, layers, p).moves[probe].mean > ThermalQuality::simulate(result, layers, no_conduction).moves[probe].mean + 0.05f);
+
+    // Preset calibration: PLA's 4 s minimum layer time at full fan -> cooling constant well above the 6 s class default,
+    // longer minimum layer time -> larger constant, disabled slow-down -> untouched.
+    ThermalModelParams pla = ThermalModelParams::for_material("PLA", 45.f);
+    pla.calibrate_cooling_from_preset(4.f, 100.f, 220.f, 25.f);
+    REQUIRE(pla.cooling_time_const > 10.f);
+    REQUIRE(pla.cooling_time_const < 20.f);
+    ThermalModelParams pla8 = ThermalModelParams::for_material("PLA", 45.f);
+    pla8.calibrate_cooling_from_preset(8.f, 100.f, 220.f, 25.f);
+    REQUIRE(pla8.cooling_time_const > pla.cooling_time_const);
+    ThermalModelParams untouched = ThermalModelParams::for_material("PLA", 45.f);
+    untouched.calibrate_cooling_from_preset(0.f, 100.f, 220.f, 25.f);
+    REQUIRE(untouched.cooling_time_const == Approx(6.f));
+
+    // Substrate temperatures are reported per layer, unclamped.
+    Scene s;
+    ThermalModelParams hot_bed = ThermalModelParams::for_material("PLA", 45.f);
+    hot_bed.bed_temp           = 105.f;
+    ThermalReport rep          = ThermalQuality::simulate(s.result, s.move_layers, hot_bed);
+    REQUIRE(rep.layer_substrate_temp.size() == rep.layer_mean.size());
+    REQUIRE(rep.layer_substrate_temp[0] == Approx(105.f).margin(1.f));
+}

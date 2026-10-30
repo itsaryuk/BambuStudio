@@ -204,6 +204,7 @@
 
 #include "HelioReleaseNote.hpp"
 #include "ThermalOptimizationDialog.hpp"
+#include <boost/algorithm/string/case_conv.hpp>
 
 using boost::optional;
 namespace fs = boost::filesystem;
@@ -15872,6 +15873,11 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
         p.bed_air_decay_height = decay_height;
         p.max_volumetric     = float_at("filament_max_volumetric_speed", f, -1.f);
         p.min_speed          = float_at("slow_down_min_speed", f, -1.f);
+        // The preset's tuned minimum layer time anchors the cooling constant; a printed tower may have refined the window.
+        p.calibrate_cooling_from_preset(float(int_at("slow_down_layer_time", f, 0)), float(int_at("fan_max_speed", f, 100)),
+                                        float(int_at("nozzle_temperature", f, 0)), std::max(chamber_temp, p.room_temp));
+        const std::string calibrated = wxGetApp().app_config->get("thermal_half_width_" + boost::to_upper_copy(type));
+        if (!calibrated.empty()) p.window_half_width = std::stof(calibrated);
         params.push_back(p);
     }
     ThermalOptimizeOptions options; // max_volumetric stays unset: the per-filament profile limit applies unless the user overrides it
@@ -15879,6 +15885,37 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
     ThermalOptimizationInputDialog dlg(nullptr, params, options, g_helio_pre_select_optimization);
     g_helio_pre_select_optimization = false;
     if (dlg.ShowModal() != wxID_OK || !launch_allowed()) return;
+
+    if (dlg.get_action() == 2) { // calibrate from the printed tower: fit the hot edge of the comfort window
+        ThermalGCodeText text;
+        if (!ThermalGCodeText::load(g_result->filename, text)) return;
+        const std::vector<int> move_layers = ThermalQuality::layers_of_moves(*g_result, text.line_layers);
+        const ThermalMaterials mats        = dlg.get_params();
+        const ThermalReport    report      = ThermalQuality::simulate(*g_result, move_layers, mats);
+        const float            height      = dlg.get_calibration_height();
+        int                    layer = -1, slot = 0;
+        for (size_t i = 1; i < g_result->moves.size(); ++i)
+            if (g_result->moves[i].type == EMoveType::Extrude && move_layers[i] >= 0 && g_result->moves[i].position.z() >= height) { layer = move_layers[i]; slot = g_result->moves[i].extruder_id; break; }
+        if (layer < 0 || layer >= int(report.layer_substrate_temp.size())) {
+            MessageDialog(nullptr, _L("No layer at that height in the sliced plate."), _L("Thermal Optimization"), wxOK | wxICON_WARNING).ShowModal();
+            return;
+        }
+        const ThermalModelParams& mat   = slot < int(mats.size()) ? mats[slot] : mats.front();
+        const float               t_sub = report.layer_substrate_temp[layer];
+        const std::string         type  = boost::to_upper_copy(types != nullptr && slot < int(types->values.size()) ? types->values[slot] : std::string());
+        if (t_sub <= mat.ideal_substrate_temp + 2.f) {
+            MessageDialog(nullptr, wxString::Format(_L("The model puts the substrate at %.0f °C on that layer, at or below the comfort midpoint of %.0f °C, so the window cannot be fitted there. Check the height, or lower the vitrification temperature in the filament preset."), t_sub, mat.ideal_substrate_temp),
+                          _L("Thermal Optimization"), wxOK | wxICON_WARNING).ShowModal();
+            return;
+        }
+        const float half = std::clamp((t_sub - mat.ideal_substrate_temp) / 0.8f, 10.f, 120.f); // that layer sits at index +0.8, the hot edge
+        wxGetApp().app_config->set("thermal_half_width_" + type, std::to_string(half));
+        wxGetApp().app_config->save();
+        MessageDialog(nullptr, wxString::Format(_L("Calibrated %s: comfort window %.0f ± %.0f °C (was ± %.0f °C). Layer %d sits at a substrate temperature of %.0f °C. Running the calibration again overwrites this."),
+                                                 wxString::FromUTF8(mat.material), mat.ideal_substrate_temp, half, mat.window_half_width, layer + 1, t_sub),
+                      _L("Thermal Optimization"), wxOK | wxICON_INFORMATION).ShowModal();
+        return;
+    }
 
     if (!helio_background_process.init_local(g_result, preview, dlg.get_params(), dlg.get_options())) {
         MessageDialog msg(nullptr, _L("The previous thermal task is still stopping; try again shortly."), _L("Thermal Optimization"), wxOK | wxICON_WARNING);
@@ -21412,6 +21449,26 @@ void Plater::calib_flowrate(int pass)
     Calib_Params params;
     params.mode = CalibMode::Calib_Flow_Rate;
     p->background_process.fff_print()->set_calib_params(params);
+}
+
+void Plater::add_thermal_calibration_tower()
+{
+    if (new_project(false, false, _L("Thermal calibration tower")) == wxID_CANCEL) return;
+    wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
+
+    Model        tmp;
+    ModelObject* obj = tmp.add_object();
+    obj->name        = "Thermal calibration tower";
+    obj->add_volume(make_cone(15., 60.)); // layer time shrinks towards the tip, so the material runs hot at some height
+    obj->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
+    obj->config.set_key_value("brim_width", new ConfigOptionFloat(5.0));
+    p->load_model_objects(tmp.objects);
+
+    // The preset's slow-down would hide the effect we want to see; the model reads the real layer times anyway.
+    auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
+    set_config_values<int, ConfigOptionInts>(filament_config, "slow_down_layer_time", 0);
+    wxGetApp().get_tab(Preset::TYPE_FILAMENT)->update_dirty();
+    wxGetApp().get_tab(Preset::TYPE_FILAMENT)->reload_config();
 }
 
 void Plater::calib_temp(const Calib_Params &params)

@@ -181,6 +181,17 @@ ThermalModelParams ThermalModelParams::for_material(const std::string& filament_
     return p;
 }
 
+void ThermalModelParams::calibrate_cooling_from_preset(float slow_down_layer_time, float fan_max_pct, float nozzle_temp, float env_temp)
+{
+    if (slow_down_layer_time <= 0.f || nozzle_temp <= 0.f) return;
+    const float t0     = deposit_mix * nozzle_temp + (1.f - deposit_mix) * ideal_substrate_temp; // fresh line on a comfortable substrate
+    const float target = ideal_substrate_temp + 0.8f * window_half_width;                      // just below "hot" when the next layer lands
+    if (t0 <= target + 1.f || target <= env_temp + 1.f) return;
+    const float tau_fan = slow_down_layer_time / std::log((t0 - env_temp) / (target - env_temp));
+    const float fan     = std::clamp(fan_max_pct, 0.f, 100.f) / 100.f;
+    cooling_time_const  = std::clamp(tau_fan * (1.f + fan_cooling_gain * fan), 1.f, 60.f);
+}
+
 bool ThermalGCodeText::load(const std::string& path, ThermalGCodeText& out)
 {
     boost::nowide::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
@@ -248,13 +259,12 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
     const int nx = int((max_x - min_x) / cell) + 4;
     const int ny = int((max_y - min_y) / cell) + 4;
     std::vector<Cell> cells(size_t(nx) * size_t(ny));
-    auto cell_at = [&](float x, float y) -> Cell& {
-        int cx = std::clamp(int((x - min_x) / cell), 0, nx - 1);
-        int cy = std::clamp(int((y - min_y) / cell), 0, ny - 1);
-        return cells[size_t(cy) * nx + cx];
+    auto cell_index = [&](float x, float y, int& cx, int& cy) {
+        cx = std::clamp(int((x - min_x) / cell), 0, nx - 1);
+        cy = std::clamp(int((y - min_y) / cell), 0, ny - 1);
     };
 
-    std::vector<double> layer_sum(n_layers, 0.), layer_time(n_layers, 0.);
+    std::vector<double> layer_sum(n_layers, 0.), layer_time(n_layers, 0.), layer_temp(n_layers, 0.);
     double sum = 0., sum2 = 0., total = 0., hot = 0., cold = 0.;
 
     double now = 0.;
@@ -285,8 +295,10 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
         const float tau     = cooling_tau(mat, m);
         const float t_noz   = m.temperature > 0.f ? m.temperature : 200.f;
         float       mn = 1e9f, mx = -1e9f;
-        double      acc = 0.;
+        double      acc = 0., acc_temp = 0.;
         int         cnt = 0;
+        auto        decayed   = [&](const Cell& k, float t_s) { return t_env + (k.temp - t_env) * std::exp(-std::max(t_s - k.t, 0.f) / k.tau); };
+        auto        deposited = [&](const Cell& k) { return k.layer >= 0 && (k.layer == L || k.layer == L - 1); };
         float       walked = 0.f;
         for (size_t k = 1; k < pts.size(); ++k) {
             const Vec2f a = pts[k - 1].head<2>(), b = pts[k].head<2>();
@@ -296,28 +308,48 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
                 const float frac = float(s) / float(n);
                 const Vec2f p    = a + (b - a) * frac;
                 const float t_s  = float(t_start + (total_len > 0.f ? (walked + len * frac) / total_len : 1.f) * dt);
-                Cell&       c    = cell_at(p.x(), p.y());
-                float       t_sub;
-                if (c.layer >= 0 && (c.layer == L || c.layer == L - 1))
-                    t_sub = t_env + (c.temp - t_env) * std::exp(-std::max(t_s - c.t, 0.f) / c.tau);
-                else
+                int cx, cy;
+                cell_index(p.x(), p.y(), cx, cy);
+                Cell& c = cells[size_t(cy) * nx + cx];
+                float t_sub;
+                if (deposited(c)) {
+                    // Lateral conduction: a neighbour counts once heat laid there has had time to cross the distance.
+                    double acc_t = 2. * decayed(c, t_s); // the spot itself counts double
+                    int    cnt_t = 2;
+                    for (int dy = -2; dy <= 2; ++dy)
+                        for (int dx = -2; dx <= 2; ++dx) {
+                            if (dx == 0 && dy == 0) continue;
+                            const int x = cx + dx, y = cy + dy;
+                            if (x < 0 || y < 0 || x >= nx || y >= ny) continue;
+                            const Cell& k = cells[size_t(y) * nx + x];
+                            if (!deposited(k)) continue;
+                            if (std::sqrt(mat.diffusivity * std::max(t_s - k.t, 0.f)) < std::hypot(float(dx), float(dy)) * cell) continue;
+                            acc_t += decayed(k, t_s);
+                            ++cnt_t;
+                        }
+                    t_sub = float(acc_t / cnt_t);
+                } else
                     t_sub = (L == 0) ? params.bed_temp : t_env; // bed, or air under an overhang/bridge
                 const float idx = std::clamp((t_sub - mid) / half, -1.f, 1.f);
-                mn = std::min(mn, idx); mx = std::max(mx, idx); acc += idx; ++cnt;
+                mn = std::min(mn, idx); mx = std::max(mx, idx); acc += idx; acc_temp += t_sub; ++cnt;
                 c.t = t_s; c.temp = mat.deposit_mix * t_noz + (1.f - mat.deposit_mix) * t_sub; c.tau = tau; c.layer = L;
             }
             walked += len;
         }
         ThermalMoveIndex& out = rep.moves[i];
         out.min = mn; out.max = mx; out.mean = float(acc / std::max(cnt, 1));
-        layer_sum[L] += out.mean * dt; layer_time[L] += dt;
+        layer_sum[L] += out.mean * dt; layer_time[L] += dt; layer_temp[L] += acc_temp / std::max(cnt, 1) * dt;
         sum += out.mean * dt; sum2 += double(out.mean) * out.mean * dt; total += dt;
         if (out.mean > 0.8f) hot += dt;
         if (out.mean < -0.8f) cold += dt;
     }
 
     rep.layer_mean.resize(n_layers);
-    for (int L = 0; L < n_layers; ++L) rep.layer_mean[L] = layer_time[L] > 0. ? float(layer_sum[L] / layer_time[L]) : 0.f;
+    rep.layer_substrate_temp.resize(n_layers);
+    for (int L = 0; L < n_layers; ++L) {
+        rep.layer_mean[L]           = layer_time[L] > 0. ? float(layer_sum[L] / layer_time[L]) : 0.f;
+        rep.layer_substrate_temp[L] = layer_time[L] > 0. ? float(layer_temp[L] / layer_time[L]) : params.room_temp;
+    }
     if (total > 0.) {
         rep.mean          = float(sum / total);
         rep.stddev        = float(std::sqrt(std::max(sum2 / total - double(rep.mean) * rep.mean, 0.)));

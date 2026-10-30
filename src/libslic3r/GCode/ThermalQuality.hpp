@@ -29,6 +29,7 @@ struct ThermalModelParams
     float fan_cooling_gain{1.5f};      // time constant divisor at 100 % part fan
     float deposit_mix{0.5f};           // share of nozzle temperature in a freshly laid line
     float cell_size{1.f};
+    float diffusivity{0.1f};           // mm²/s, lateral conduction: heat reaches sqrt(diffusivity * age) sideways
     float max_volumetric{-1.f};        // filament profile limit for the optimizer (mm³/s), <= 0: none
     float min_speed{-1.f};             // filament profile slow-down floor (mm/s), <= 0: none
     bool  warp_prone{false};           // engineering materials: advice favours enclosure and layer time over the part fan
@@ -36,6 +37,10 @@ struct ThermalModelParams
     // Defaults for a filament type (exact, then base type before '-', then without trailing digits: PA6-CF -> PA6 -> PA);
     // vitrification_temp <= 0 falls back to the class midpoint.
     static ThermalModelParams for_material(const std::string& filament_type, float vitrification_temp);
+
+    // Derives cooling_time_const from the preset's tuned minimum layer time: a layer that short, with the
+    // preset's maximum part fan, must have cooled to the edge of the comfort window when the next one lands.
+    void calibrate_cooling_from_preset(float slow_down_layer_time, float fan_max_pct, float nozzle_temp, float env_temp);
 };
 
 // One entry per filament slot, indexed by MoveVertex::extruder_id; the first entry is used for missing slots.
@@ -59,6 +64,7 @@ struct ThermalReport
 {
     std::vector<ThermalMoveIndex> moves;   // parallel to GCodeProcessorResult::moves
     std::vector<float>            layer_mean;
+    std::vector<float>            layer_substrate_temp; // time-weighted mean substrate temperature per layer (°C, unclamped)
     float mean{0.f}, stddev{0.f};
     float hot_fraction{0.f}, cold_fraction{0.f}; // share of extrusion time with |index| > 0.8
     std::string outcome;    // WILL_PRINT / MAY_PRINT / LIKELY_FAIL

@@ -66,6 +66,20 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     (preselect_optimize ? m_optimize : m_analyze)->SetValue(true);
     sizer->Add(m_analyze, 0, wxLEFT | wxRIGHT, pad);
     sizer->Add(m_optimize, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
+    m_calibrate = new wxRadioButton(this, wxID_ANY, _L("Calibrate: the sliced plate is a printed calibration tower"));
+    sizer->Add(m_calibrate, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
+    auto* calib_row = new wxBoxSizer(wxHORIZONTAL);
+    calib_row->Add(new Label(this, Label::Body_13, _L("Height where corners rounded off or layers sagged (mm)")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+    m_calib_height = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0., 300., 40., 0.5);
+    calib_row->Add(m_calib_height, 0, wxALIGN_CENTER_VERTICAL);
+    auto* tower = make_button(this, _L("Add calibration tower"), false);
+    tower->SetToolTip(_L("Opens a new project with a 30 mm cone: layers get shorter towards the top, so the material eventually runs hot. Print it with this filament, note the height where corners round off or the surface sags, then slice it again, open this dialog and enter that height."));
+    tower->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        EndModal(wxID_CANCEL);
+        wxGetApp().plater()->CallAfter([]() { wxGetApp().plater()->add_thermal_calibration_tower(); });
+    });
+    calib_row->Add(tower, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
+    sizer->Add(calib_row, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
     sizer->AddSpacer(pad);
     wxString materials;
     for (size_t i = 0; i < params.size(); ++i) {
@@ -118,6 +132,8 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     CenterOnParent();
     wxGetApp().UpdateDlgDarkUI(this);
 }
+
+float ThermalOptimizationInputDialog::get_calibration_height() const { return float(m_calib_height->GetValue()); }
 
 ThermalMaterials ThermalOptimizationInputDialog::get_params() const
 {
