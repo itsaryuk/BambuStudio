@@ -282,6 +282,7 @@ wxDEFINE_EVENT(EVT_SWITCH_TO_PREPARE_TAB, wxCommandEvent);
 wxDEFINE_EVENT(EVT_HELIO_PROCESSING_COMPLETED, HelioCompletionEvent);
 wxDEFINE_EVENT(EVT_HELIO_PROCESSING_STARTED, HelioActionEvent);
 wxDEFINE_EVENT(EVT_HELIO_INPUT_DLG, SimpleEvent);
+wxDEFINE_EVENT(EVT_THERMAL_INPUT_DLG, SimpleEvent);
 // end helio
 
 #define PRINTER_THUMBNAIL_SIZE (wxSize(FromDIP(48), FromDIP(48)))
@@ -7900,6 +7901,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
         q->Bind(EVT_HELIO_PROCESSING_COMPLETED, &priv::on_helio_processing_complete, this);
         q->Bind(EVT_HELIO_PROCESSING_STARTED, &priv::on_helio_processing_start, this);
         q->Bind(EVT_HELIO_INPUT_DLG, &priv::on_helio_input_dlg, this);
+        q->Bind(EVT_THERMAL_INPUT_DLG, [this](SimpleEvent&) { on_thermal_optimization(partplate_list.get_curr_plate()); });
         // end helio
     }
 
@@ -15972,11 +15974,6 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
 void Plater::priv::on_helio_input_dlg(SimpleEvent &a)
 {
     const PartPlate* current_plate = partplate_list.get_curr_plate();
-    // The built-in Thermal Optimization is the default; the cloud service is used only when it was explicitly enabled.
-    if (wxGetApp().app_config->get("helio_enable") != "true") {
-        on_thermal_optimization(current_plate);
-        return;
-    }
     if (current_plate == nullptr || !current_plate->is_slice_result_valid() ||
         !current_plate->can_slice() || q->only_gcode_mode() || q->using_exported_file() ||
         sidebar->has_broken_mixed_filament(current_plate) || q->is_background_process_slicing())

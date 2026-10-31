@@ -195,7 +195,7 @@ ThermalCalibrationDialog::ThermalCalibrationDialog(wxWindow* parent, const State
     para(state.stored.empty() ? _L("Not calibrated yet: the material defaults are in use.") : state.stored, Label::Body_12, 12);
 
     para(_L("1. Print the tower"), Label::Head_13, 4);
-    para(_L("A 30 mm cone, about 15 minutes. Layer time shrinks towards the tip, so at some height the material stops cooling enough before the next layer lands."));
+    para(_L("A cone 30 mm wide and 60 mm tall, about 15 minutes. Layer time shrinks towards the tip, so at some height the material stops cooling enough before the next layer lands."));
     if (state.slow_down_now > 0)
         para(wxString::Format(_L("Slow down layer time (Filament → Cooling) is %d s on the loaded filament. Creating the tower sets it to 0; keep it at 0 when you slice, or the slicer throttles the small layers and hides the effect."), state.slow_down_now), Label::Body_12);
     else if (state.slow_down_now == 0)
@@ -353,7 +353,7 @@ void ThermalOptimizationResultDialog::finish(bool offer_optimize, float cooling_
             EndModal(wxID_OK);
             wxGetApp().plater()->CallAfter([]() {
                 get_helio_pre_select_optimization_flag() = true;
-                wxQueueEvent(wxGetApp().plater(), new SimpleEvent(EVT_HELIO_INPUT_DLG));
+                wxQueueEvent(wxGetApp().plater(), new SimpleEvent(EVT_THERMAL_INPUT_DLG));
             });
         });
         buttons->Add(optimize, 0, wxRIGHT, FromDIP(8));

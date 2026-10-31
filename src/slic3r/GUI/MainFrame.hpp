@@ -423,6 +423,7 @@ public:
 
     wxWindowID expand_program_id = wxNewId();
     wxWindowID expand_helio_id = wxNewId();
+    wxWindowID expand_thermal_id = wxNewId();
 
     wxStaticBitmap* split_line_icon{nullptr};
     ExpandButtonHolder* expand_program_holder{nullptr};
