@@ -15572,6 +15572,11 @@ void Plater::priv::on_helio_processing_complete(HelioCompletionEvent &a)
     if (!helio_background_process.is_action_current(a.generation)) {
         return;
     }
+    // Close out the progress notification; nothing after "loading preview" reports progress otherwise.
+    if (a.is_successful)
+        notification_manager->set_slicing_progress_percentage(helio_background_process.local_engine ? _u8L("Thermal Optimization: done") : _u8L("Helio processing finished"), 1.f, !helio_background_process.local_engine);
+    else
+        notification_manager->set_slicing_progress_canceled(helio_background_process.local_engine ? _u8L("Thermal Optimization failed") : _u8L("Helio processing failed"));
     if (a.is_successful) {
         this->reset_gcode_toolpaths();
 
