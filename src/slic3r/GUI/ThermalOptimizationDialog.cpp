@@ -118,6 +118,8 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     m_pause->SetToolTip(_L("Where even the slowest allowed speed leaves a layer too hot (small tips, pins), the head retracts, lifts, parks beside the part and waits the seconds the model asks for, then returns. Adds print time; a small mark can show where printing resumes."));
     pause_row->Add(m_pause, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
     m_pause_cap = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(70), -1), wxSP_ARROW_KEYS, 1, 60, options.max_pause > 0.f ? int(options.max_pause) : 15);
+    m_pause_cap->Enable(m_pause->GetValue());
+    m_pause->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) { m_pause_cap->Enable(m_pause->GetValue()); });
     pause_row->Add(m_pause_cap, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
     pause_row->Add(new Label(this, Label::Body_13, _L("s per layer")), 0, wxALIGN_CENTER_VERTICAL);
     sizer->Add(pause_row, 0, wxLEFT | wxRIGHT | wxTOP, pad);
@@ -216,7 +218,7 @@ ThermalCalibrationDialog::ThermalCalibrationDialog(wxWindow* parent, const State
     para(_L("Open the sliced tower project (the one you printed from), enter the height and press Calibrate. The model is tuned so that layer sits at the hot edge of the comfort window, and the result is stored for this filament type."), Label::Body_13, 6);
     auto* step3 = new wxBoxSizer(wxHORIZONTAL);
     step3->Add(new Label(this, Label::Body_13, _L("Height where ridges start (mm)")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
-    m_height = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0., 300., 40., 0.1);
+    m_height = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0., 60., 40., 0.1); // the tower is 60 mm tall
     step3->Add(m_height, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
     auto* go = make_button(this, _L("Calibrate"), state.plate_ready);
     go->Enable(state.plate_ready);
@@ -298,6 +300,8 @@ ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* paren
     const int diff = original_time_seconds - optimized_time_seconds;
     if (diff > 0)
         add_line(wxString::Format(_L("Print time %s → %s (saves %s)."), seconds_text(original_time_seconds), seconds_text(optimized_time_seconds), seconds_text(diff)));
+    else if (diff == 0)
+        add_line(wxString::Format(_L("Print time unchanged (%s)."), seconds_text(original_time_seconds)));
     else
         add_line(wxString::Format(_L("Print time %s → %s (slowed down to protect hot layers)."), seconds_text(original_time_seconds), seconds_text(optimized_time_seconds)));
     auto grade = [](const std::string& g) { return g == "HIGH" ? _L("High") : g == "MEDIUM" ? _L("Medium") : _L("Low"); };

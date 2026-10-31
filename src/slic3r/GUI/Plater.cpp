@@ -15933,6 +15933,15 @@ wxString Plater::priv::thermal_calibrate(float height)
     wxString msg = wxString::Format(_L("Calibrated %s: cooling constant %.1f s in still air (material default %.1f s), comfort window %.0f ± %.0f °C. Layer %d at %.1f mm now sits at the hot edge of the window; the layers below come out cooler. Stored for this filament type and used from now on."),
                                     wxString::FromUTF8(mat.material), tau, class_tau, mat.ideal_substrate_temp, mat.window_half_width, layer + 1, height);
     if (bounded) msg += _L(" The fit hit its limit, so check the measured height and the bed and chamber temperatures.");
+    if (const std::string restore = wxGetApp().app_config->get("thermal", "slow_down_restore"); !restore.empty()) {
+        const int was = std::atoi(restore.c_str());
+        set_config_values<int, ConfigOptionInts>(&wxGetApp().preset_bundle->filaments.get_edited_preset().config, "slow_down_layer_time", was);
+        wxGetApp().get_tab(Preset::TYPE_FILAMENT)->update_dirty();
+        wxGetApp().get_tab(Preset::TYPE_FILAMENT)->reload_config();
+        wxGetApp().app_config->erase("thermal", "slow_down_restore");
+        wxGetApp().app_config->save();
+        msg += wxString::Format(_L(" The filament's slow-down layer time is back to %d s."), was);
+    }
     return msg;
 }
 
@@ -21507,8 +21516,11 @@ void Plater::add_thermal_calibration_tower()
     set_config_values<int, ConfigOptionInts>(filament_config, "slow_down_layer_time", 0);
     wxGetApp().get_tab(Preset::TYPE_FILAMENT)->update_dirty();
     wxGetApp().get_tab(Preset::TYPE_FILAMENT)->reload_config();
-
-    (void) sd_was;
+    // Calibrate puts it back; kept in the app config so it survives a restart while the tower prints.
+    if (sd_was > 0 && wxGetApp().app_config->get("thermal", "slow_down_restore").empty()) {
+        wxGetApp().app_config->set("thermal", "slow_down_restore", std::to_string(sd_was));
+        wxGetApp().app_config->save();
+    }
     CallAfter([this]() { open_thermal_calibration(); });
 }
 
@@ -21520,10 +21532,17 @@ void Plater::add_thermal_cooling_tower(float height)
     const BoundingBoxf3 plate  = p->partplate_list.get_curr_plate()->get_bounding_box();
     // Beside the parts, 20 mm clear, first spot that fits on the plate: right, left, front, back.
     const double gap = 20. + r;
-    Vec3d        pos(parts.max.x() + gap, parts.center().y(), 0.);
-    const Vec3d  options[4] = {pos, Vec3d(parts.min.x() - gap, parts.center().y(), 0.), Vec3d(parts.center().x(), parts.min.y() - gap, 0.), Vec3d(parts.center().x(), parts.max.y() + gap, 0.)};
+    const Vec3d  options[4] = {Vec3d(parts.max.x() + gap, parts.center().y(), 0.), Vec3d(parts.min.x() - gap, parts.center().y(), 0.),
+                               Vec3d(parts.center().x(), parts.min.y() - gap, 0.), Vec3d(parts.center().x(), parts.max.y() + gap, 0.)};
+    const Vec3d* found = nullptr;
     for (const Vec3d& o : options)
-        if (o.x() - r >= plate.min.x() && o.x() + r <= plate.max.x() && o.y() - r >= plate.min.y() && o.y() + r <= plate.max.y()) { pos = o; break; }
+        if (o.x() - r >= plate.min.x() && o.x() + r <= plate.max.x() && o.y() - r >= plate.min.y() && o.y() + r <= plate.max.y()) { found = &o; break; }
+    if (found == nullptr) {
+        MessageDialog dlg(nullptr, _L("There is no room for a cooling tower beside the parts on this plate. Move the parts towards a corner, then try again."), _L("Thermal Optimization"), wxOK | wxICON_INFORMATION);
+        dlg.ShowModal();
+        return;
+    }
+    const Vec3d pos = *found;
 
     Model        tmp;
     ModelObject* obj = tmp.add_object();
