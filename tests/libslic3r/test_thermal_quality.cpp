@@ -334,6 +334,53 @@ TEST_CASE("Thermal quality: tower calibration fits the cooling constant", "[Ther
     REQUIRE(bounded);
 }
 
+TEST_CASE("Thermal quality: cooling pauses for layers that cannot cool in time", "[ThermalQuality]")
+{
+    Scene column(false, true); // 2 s layers
+    for (auto& m : column.result.moves) m.fan_speed = 0.f; // no fan: hot
+    ThermalMaterials       mats{pla_cold_bed()};
+    ThermalOptimizeOptions o;
+    o.min_speed_factor = o.max_speed_factor = 1.f; // speed pinned: only a pause can help
+    o.max_pause        = 30.f;
+    std::vector<float>       pauses;
+    const std::vector<float> f = ThermalQuality::optimize(column.result, column.move_layers, mats, o, &pauses);
+    REQUIRE(pauses.size() == f.size());
+    float total = 0.f;
+    int   paused = 0;
+    for (float x : pauses) { REQUIRE(x >= 0.f); REQUIRE(x <= 30.f); total += x; paused += x > 0.05f; }
+    REQUIRE(total > 0.f);
+    const ThermalReport before = ThermalQuality::simulate(column.result, column.move_layers, mats, &f, &o);
+    const ThermalReport after  = ThermalQuality::simulate(column.result, column.move_layers, mats, &f, &o, &pauses);
+    REQUIRE(after.mean < before.mean);
+    REQUIRE(before.hot_top_z > 0.f);
+    REQUIRE(ThermalQuality::time_factor(column.result, column.move_layers, f, o, &pauses) > ThermalQuality::time_factor(column.result, column.move_layers, f, o));
+    // one dwell per paused layer in the written file, and the file still loads
+    boost::filesystem::path out = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("thermal-%%%%.gcode");
+    REQUIRE(ThermalQuality::write_gcode(column.text, out.string(), column.result, column.move_layers, after, &f, &o, &pauses));
+    ThermalGCodeText back;
+    REQUIRE(ThermalGCodeText::load(out.string(), back));
+    boost::filesystem::remove(out);
+    int dwells = 0;
+    for (const std::string& l : back.lines) dwells += l.rfind("G4 P", 0) == 0;
+    REQUIRE(dwells == paused);
+    REQUIRE(back.line_layers.size() == back.lines.size() + 1);
+
+    // the bed outline and retraction settings come from the config block; "0x0" is not a hex number
+    boost::filesystem::path cfg = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("thermal-cfg-%%%%.gcode");
+    {
+        boost::nowide::ofstream w(cfg.string().c_str());
+        w << "G1 X0 Y0\n; printable_area = 0x0,340x0,340x320,0x320\n; use_relative_e_distances = 1\n; retraction_length = 3,3\n; filament_retraction_length = nil\n; travel_speed = 1000\n";
+    }
+    ThermalGCodeText parsed;
+    REQUIRE(ThermalGCodeText::load(cfg.string(), parsed));
+    boost::filesystem::remove(cfg);
+    REQUIRE(parsed.printable_area.size() == 4);
+    REQUIRE(parsed.printable_area[2] == Vec2f(340.f, 320.f));
+    REQUIRE(parsed.relative_e);
+    REQUIRE(parsed.retraction_length == Approx(3.f));
+    REQUIRE(parsed.travel_speed == Approx(1000.f));
+}
+
 TEST_CASE("Thermal quality: lateral conduction and preset-derived cooling", "[ThermalQuality]")
 {
     // A cold line laid next to a line that is still hot reads warmer when heat may cross between cells.
@@ -437,9 +484,15 @@ TEST_CASE("run the engine on a real G-code file", "[.][thermal_file]")
         std::printf("calibrate: layer %d target %.1f C -> tau %.2f s (class %.2f) bounded %d\n", cal_layer, target, tau, mats[0].cooling_time_const, int(bounded));
         mats[0].cooling_time_const = tau;
         const ThermalReport before = ThermalQuality::simulate(r, layers, mats);
-        f = ThermalQuality::optimize(r, layers, mats, o);
-        const ThermalReport after = ThermalQuality::simulate(r, layers, mats, &f, &o);
-        std::printf("mean %.2f -> %.2f, stddev %.2f -> %.2f, time_factor %.3f\n", before.mean, after.mean, before.stddev, after.stddev, ThermalQuality::time_factor(r, layers, f, o));
+        if (const char* mp = std::getenv("THERMAL_PAUSE")) o.max_pause = float(std::atof(mp));
+        std::vector<float> pauses;
+        f = ThermalQuality::optimize(r, layers, mats, o, &pauses);
+        const ThermalReport after = ThermalQuality::simulate(r, layers, mats, &f, &o, &pauses);
+        float total_pause = 0.f; int paused = 0;
+        for (float x : pauses) { total_pause += x; paused += x > 0.05f; }
+        std::printf("mean %.2f -> %.2f, stddev %.2f -> %.2f, time_factor %.3f, pauses %d layers %.0f s, hot z %.1f..%.1f\n", before.mean, after.mean, before.stddev, after.stddev,
+                    ThermalQuality::time_factor(r, layers, f, o, &pauses), paused, total_pause, before.hot_bottom_z, before.hot_top_z);
+        if (o.max_pause > 0.f) REQUIRE(ThermalQuality::write_gcode(text, std::string(path) + ".paused.gcode", r, layers, after, &f, &o, &pauses));
         for (size_t L = 0; L < f.size(); L += 10)
             std::printf("  layer %3zu  mean before %+.2f after %+.2f  factor %.2f\n", L, before.layer_mean[L], after.layer_mean[L], f[L]);
     }

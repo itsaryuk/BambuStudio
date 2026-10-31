@@ -38,6 +38,8 @@ private:
     wxSpinCtrl*            m_slow_down{nullptr};
     wxSpinCtrlDouble*      m_max_volumetric{nullptr};
     wxCheckBox*            m_keep_outer{nullptr};
+    wxCheckBox*            m_pause{nullptr};
+    wxSpinCtrl*            m_pause_cap{nullptr};
 };
 
 // Three steps from a printed tower to a calibrated model: create and print the tower, read it, enter the height.
@@ -76,7 +78,7 @@ public:
 private:
     void     init(const wxString& headline);
     void     add_line(const wxString& text, bool bold = false);
-    void     finish(bool offer_optimize);
+    void     finish(bool offer_optimize, float cooling_tower_height = 0.f);
     wxSizer* m_sizer{nullptr};
 };
 

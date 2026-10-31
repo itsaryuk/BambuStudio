@@ -57,6 +57,7 @@ struct ThermalOptimizeOptions
     int   first_layer{1};         // 0-based, inclusive. Layer 0 is never touched.
     int   last_layer{-1};         // -1: to the end
     int   passes{3};
+    float max_pause{0.f};         // s per layer: park away from the part and wait on layers that cannot cool in time; 0 = off
 };
 
 struct ThermalMoveIndex { float min{0.f}, max{0.f}, mean{0.f}; };
@@ -74,6 +75,10 @@ struct ThermalReport
     std::vector<std::string> assumptions; // material parameters the model used, one line per filament
     std::vector<std::pair<std::string, std::string>> fixes; // {QUICK|ADVANCED|EXPERT, text}
     float suggested_speed_factor{1.f}; // time multiplier for the optimizable sections, < 1 = faster
+    // Per layer, for the pause planner and the cooling tower: top z, time-weighted cooling constant, air temperature,
+    // hot edge of the comfort window (°C).
+    std::vector<float> layer_z, layer_tau, layer_env, layer_hot_edge;
+    float hot_bottom_z{-1.f}, hot_top_z{-1.f}; // z range of layers rated hot (mean > 0.6), -1 when none
 };
 
 // The sliced G-code text plus the layer every line belongs to.
@@ -82,12 +87,20 @@ struct ThermalOptimizeSummary
 {
     float mean_before{0.f}, mean_after{0.f}, std_before{0.f}, std_after{0.f};
     int   layers{0}, slowed{0}, sped_up{0};
+    int   paused{0};            // layers followed by a cooling pause
+    float pause_total{0.f};     // s
 };
 
 struct ThermalGCodeText
 {
     std::vector<std::string> lines;       // without line terminators
     std::vector<int>         line_layers; // 1-based line -> 0-based layer, -1 before the first layer
+    // From the config block at the end of the file, for the cooling pauses.
+    std::vector<Vec2f> printable_area;    // bed outline in machine coordinates, empty when unknown
+    bool               relative_e{true};
+    float              retraction_length{0.8f};
+    float              retraction_speed{30.f};  // mm/s
+    float              travel_speed{200.f};     // mm/s
     static bool load(const std::string& path, ThermalGCodeText& out);
 };
 
@@ -105,7 +118,8 @@ public:
                                   const std::vector<int>&        move_layers,
                                   const ThermalMaterials&        materials,
                                   const std::vector<float>*      layer_speed_factors = nullptr,
-                                  const ThermalOptimizeOptions*  eligibility         = nullptr);
+                                  const ThermalOptimizeOptions*  eligibility         = nullptr,
+                                  const std::vector<float>*      layer_pauses        = nullptr); // s added after each layer
     static ThermalReport simulate(const GCodeProcessorResult& result, const std::vector<int>& move_layers, const ThermalModelParams& params,
                                   const std::vector<float>* layer_speed_factors = nullptr, const ThermalOptimizeOptions* eligibility = nullptr)
     {
@@ -114,10 +128,13 @@ public:
 
     // Per-layer feedrate multipliers that pull every layer towards the comfort window, within the
     // options and the filament profile limits (max volumetric speed, slow-down floor).
+    // With options.max_pause > 0 and layer_pauses given, also plans a wait after layers that stay hot at the slowest
+    // allowed speed, so the next layer lands on material that has cooled to the hot edge of the window.
     static std::vector<float> optimize(const GCodeProcessorResult& result,
                                        const std::vector<int>&     move_layers,
                                        const ThermalMaterials&     materials,
-                                       const ThermalOptimizeOptions& options);
+                                       const ThermalOptimizeOptions& options,
+                                       std::vector<float>*         layer_pauses = nullptr);
     static std::vector<float> optimize(const GCodeProcessorResult& result, const std::vector<int>& move_layers, const ThermalModelParams& params,
                                        const ThermalOptimizeOptions& options)
     {
@@ -126,7 +143,8 @@ public:
 
     // Print-time multiplier of the optimizable sections implied by layer_speed_factors (< 1 = faster).
     static float time_factor(const GCodeProcessorResult& result, const std::vector<int>& move_layers,
-                             const std::vector<float>& layer_speed_factors, const ThermalOptimizeOptions& options);
+                             const std::vector<float>& layer_speed_factors, const ThermalOptimizeOptions& options,
+                             const std::vector<float>* layer_pauses = nullptr);
 
     // Writes text to dst with a thermal tag on every extrusion line and, when layer_speed_factors
     // is given, feedrates of eligible extrusions rescaled and M73 progress lines recomputed.
@@ -136,7 +154,8 @@ public:
                             const std::vector<int>&       move_layers,
                             const ThermalReport&          report,
                             const std::vector<float>*     layer_speed_factors = nullptr,
-                            const ThermalOptimizeOptions* options             = nullptr);
+                            const ThermalOptimizeOptions* options             = nullptr,
+                            const std::vector<float>*     layer_pauses        = nullptr);
 
     static bool eligible(const GCodeProcessorResult::MoveVertex& m, int layer, const ThermalOptimizeOptions& o);
 

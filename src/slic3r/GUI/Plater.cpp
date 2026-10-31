@@ -21515,6 +21515,35 @@ void Plater::add_thermal_calibration_tower()
     CallAfter([this]() { open_thermal_calibration(); });
 }
 
+void Plater::add_thermal_cooling_tower(float height)
+{
+    height = std::clamp(height, 5.f, 300.f);
+    const double        r      = 8.;
+    const BoundingBoxf3 parts  = model().bounding_box();
+    const BoundingBoxf3 plate  = p->partplate_list.get_curr_plate()->get_bounding_box();
+    // Beside the parts, 20 mm clear, first spot that fits on the plate: right, left, front, back.
+    const double gap = 20. + r;
+    Vec3d        pos(parts.max.x() + gap, parts.center().y(), 0.);
+    const Vec3d  options[4] = {pos, Vec3d(parts.min.x() - gap, parts.center().y(), 0.), Vec3d(parts.center().x(), parts.min.y() - gap, 0.), Vec3d(parts.center().x(), parts.max.y() + gap, 0.)};
+    for (const Vec3d& o : options)
+        if (o.x() - r >= plate.min.x() && o.x() + r <= plate.max.x() && o.y() - r >= plate.min.y() && o.y() + r <= plate.max.y()) { pos = o; break; }
+
+    Model        tmp;
+    ModelObject* obj = tmp.add_object();
+    obj->name        = "Thermal cooling tower";
+    obj->add_volume(make_cylinder(r, double(height)));
+    obj->config.set_key_value("wall_loops", new ConfigOptionInt(2));
+    obj->config.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
+    obj->config.set_key_value("top_shell_layers", new ConfigOptionInt(0));
+    obj->config.set_key_value("bottom_shell_layers", new ConfigOptionInt(1));
+    obj->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
+    obj->center_around_origin();
+    obj->add_instance()->set_offset(pos);
+    p->load_model_objects(tmp.objects);
+    p->notification_manager->push_notification(NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                               _u8L("Cooling tower added beside the parts. Slice again, then analyze or optimize."));
+}
+
 void Plater::open_thermal_calibration()
 {
     ThermalCalibrationDialog::State st;

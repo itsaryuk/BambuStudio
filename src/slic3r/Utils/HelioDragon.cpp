@@ -2978,18 +2978,22 @@ void HelioBackgroundProcess::run_local_engine()
 
     HelioQuery::RatingData rating;
     rating.action = action;
-    std::vector<float> factors;
+    std::vector<float> factors, local_pauses;
     std::string        out_path;
     if (action == 1) {
         progress(55, _u8L("Thermal Optimization: rebalancing layer speeds"));
-        factors             = ThermalQuality::optimize(*m_gcode_result, move_layers, local_params, local_options);
-        ThermalReport after = ThermalQuality::simulate(*m_gcode_result, move_layers, local_params, &factors, &local_options);
+        factors             = ThermalQuality::optimize(*m_gcode_result, move_layers, local_params, local_options, &local_pauses);
+        ThermalReport after = ThermalQuality::simulate(*m_gcode_result, move_layers, local_params, &factors, &local_options, &local_pauses);
         rating.qualityMeanImprovement = ThermalQuality::quality_grade(std::abs(report.mean), std::abs(after.mean));
         rating.qualityStdImprovement  = ThermalQuality::quality_grade(report.stddev, after.stddev);
         local_summary = ThermalOptimizeSummary{report.mean, after.mean, report.stddev, after.stddev, int(factors.size()), 0, 0};
         for (float x : factors) {
             if (x < 0.999f) ++local_summary.slowed;
             if (x > 1.001f) ++local_summary.sped_up;
+        }
+        for (float x : local_pauses) {
+            if (x > 0.05f) ++local_summary.paused;
+            local_summary.pause_total += x;
         }
         report   = std::move(after);
         out_path = create_path_for_optimization_gcode(filename);
@@ -3004,7 +3008,7 @@ void HelioBackgroundProcess::run_local_engine()
     progress(80, _u8L("Thermal Optimization: writing G-code"));
     const bool optimized = action == 1;
     if (!ThermalQuality::write_gcode(text, out_path, *m_gcode_result, move_layers, report, optimized ? &factors : nullptr,
-                                     optimized ? &local_options : nullptr)) {
+                                     optimized ? &local_options : nullptr, optimized ? &local_pauses : nullptr)) {
         fail(_u8L("Thermal Optimization: could not write the result G-code"));
         return;
     }

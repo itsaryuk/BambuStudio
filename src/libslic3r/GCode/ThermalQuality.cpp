@@ -9,6 +9,8 @@
 
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/split.hpp>
+#include <boost/algorithm/string/classification.hpp>
 #include <boost/nowide/fstream.hpp>
 
 #include "libslic3r/ExtrusionEntity.hpp"
@@ -76,6 +78,8 @@ struct LineInfo
     bool   motion{false};  // G0/G1/G2/G3
     bool   has_xy{false};
     bool   has_e{false};
+    bool   has_x{false}, has_y{false}, has_z{false};
+    float  x{0.f}, y{0.f}, z{0.f}, e{0.f};
     size_t f_pos{std::string::npos}, f_len{0};
     double f{0.};
 };
@@ -96,7 +100,13 @@ LineInfo parse_line(const std::string& line)
     while (i < end) {
         char ch = line[i];
         if (ch == 'X' || ch == 'Y') info.has_xy = true;
-        if (ch == 'E') info.has_e = true;
+        if (ch == 'X' || ch == 'Y' || ch == 'Z' || ch == 'E') {
+            const float v = std::atof(line.c_str() + i + 1);
+            if (ch == 'X') { info.has_x = true; info.x = v; }
+            if (ch == 'Y') { info.has_y = true; info.y = v; }
+            if (ch == 'Z') { info.has_z = true; info.z = v; }
+            if (ch == 'E') { info.has_e = true; info.e = v; }
+        }
         if (ch == 'F') {
             size_t s = i + 1;
             size_t e = s;
@@ -222,9 +232,34 @@ bool ThermalGCodeText::load(const std::string& path, ThermalGCodeText& out)
     out.line_layers.push_back(-1); // 1-based
     int layer = -1;
     std::string line;
+    auto value_of = [](const std::string& l, const char* key) -> const char* { // "; key = value" -> value, or nullptr
+        const std::string prefix = std::string("; ") + key + " = ";
+        return boost::starts_with(l, prefix) ? l.c_str() + prefix.size() : nullptr;
+    };
+    auto first_number = [](const char* v, float& dst) { // "3,3" or "nil" (per-filament lists)
+        char* end = nullptr;
+        const float f = std::strtof(v, &end);
+        if (end != v) dst = f;
+    };
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (boost::starts_with(line, "; CHANGE_LAYER")) ++layer;
+        if (line.size() > 2 && line[0] == ';' && line[1] == ' ') {
+            if (const char* v = value_of(line, "printable_area")) {
+                out.printable_area.clear();
+                std::vector<std::string> points;
+                boost::split(points, std::string(v), boost::is_any_of(","));
+                for (const std::string& pt : points) { // "0x0,340x0,340x320,0x320"; strtof would read "0x0" as hex, so split first
+                    const size_t x_at = pt.find('x');
+                    if (x_at == std::string::npos) continue;
+                    out.printable_area.emplace_back(float(std::atof(pt.substr(0, x_at).c_str())), float(std::atof(pt.substr(x_at + 1).c_str())));
+                }
+            } else if (const char* v = value_of(line, "use_relative_e_distances")) out.relative_e = v[0] == '1';
+            else if (const char* v = value_of(line, "retraction_length")) first_number(v, out.retraction_length);
+            else if (const char* v = value_of(line, "filament_retraction_length")) first_number(v, out.retraction_length); // overrides when numeric
+            else if (const char* v = value_of(line, "retraction_speed")) first_number(v, out.retraction_speed);
+            else if (const char* v = value_of(line, "travel_speed")) first_number(v, out.travel_speed);
+        }
         out.lines.push_back(line);
         out.line_layers.push_back(layer);
     }
@@ -280,7 +315,8 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
                                        const std::vector<int>&       move_layers,
                                        const ThermalMaterials&       materials,
                                        const std::vector<float>*     layer_speed_factors,
-                                       const ThermalOptimizeOptions* eligibility)
+                                       const ThermalOptimizeOptions* eligibility,
+                                       const std::vector<float>*     layer_pauses)
 {
     ThermalReport             rep;
     const ThermalModelParams& params = material_for(materials, 0); // bed, chamber and grid settings are shared
@@ -315,6 +351,9 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
     };
 
     std::vector<double> layer_sum(n_layers, 0.), layer_time(n_layers, 0.), layer_temp(n_layers, 0.);
+    std::vector<double> layer_tau_sum(n_layers, 0.), layer_env_sum(n_layers, 0.), layer_edge_sum(n_layers, 0.);
+    std::vector<float>  layer_zmax(n_layers, 0.f);
+    int                 prev_L = -1;
     double sum = 0., sum2 = 0., total = 0., hot = 0., cold = 0.;
 
     const std::vector<double> durations = move_durations(result, move_layers);
@@ -326,6 +365,10 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
         if (layer_speed_factors != nullptr && eligibility != nullptr && L >= 0 && L < int(layer_speed_factors->size()) &&
             eligible(m, L, *eligibility))
             dt /= std::max((*layer_speed_factors)[L], 0.05f);
+        if (L != prev_L) { // a planned wait after the previous layer: the part cools, nothing is laid
+            if (prev_L >= 0 && layer_pauses != nullptr && prev_L < int(layer_pauses->size())) now += (*layer_pauses)[prev_L];
+            prev_L = L;
+        }
         const double t_start = now;
         now += dt;
         if (m.type != EMoveType::Extrude || L < 0) continue;
@@ -397,6 +440,8 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
         }
         out.min = mn; out.max = mx; out.mean = float(acc / cnt);
         layer_sum[L] += out.mean * dt; layer_time[L] += dt; layer_temp[L] += acc_temp / cnt * dt;
+        layer_tau_sum[L] += tau * dt; layer_env_sum[L] += t_env * dt; layer_edge_sum[L] += (mid + 0.8f * half) * dt;
+        layer_zmax[L] = std::max(layer_zmax[L], m.position.z());
         sum += out.mean * dt; sum2 += double(out.mean) * out.mean * dt; total += dt;
         if (out.mean > 0.8f) hot += dt;
         if (out.mean < -0.8f) cold += dt;
@@ -404,9 +449,22 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
 
     rep.layer_mean.resize(n_layers);
     rep.layer_substrate_temp.resize(n_layers);
+    rep.layer_z.resize(n_layers);
+    rep.layer_tau.resize(n_layers);
+    rep.layer_env.resize(n_layers);
+    rep.layer_hot_edge.resize(n_layers);
     for (int L = 0; L < n_layers; ++L) {
-        rep.layer_mean[L]           = layer_time[L] > 0. ? float(layer_sum[L] / layer_time[L]) : 0.f;
-        rep.layer_substrate_temp[L] = layer_time[L] > 0. ? float(layer_temp[L] / layer_time[L]) : params.room_temp;
+        const bool have = layer_time[L] > 0.;
+        rep.layer_mean[L]           = have ? float(layer_sum[L] / layer_time[L]) : 0.f;
+        rep.layer_substrate_temp[L] = have ? float(layer_temp[L] / layer_time[L]) : params.room_temp;
+        rep.layer_z[L]              = layer_zmax[L];
+        rep.layer_tau[L]            = have ? float(layer_tau_sum[L] / layer_time[L]) : params.cooling_time_const;
+        rep.layer_env[L]            = have ? float(layer_env_sum[L] / layer_time[L]) : params.room_temp;
+        rep.layer_hot_edge[L]       = have ? float(layer_edge_sum[L] / layer_time[L]) : params.ideal_substrate_temp + 0.8f * params.window_half_width;
+        if (have && rep.layer_mean[L] > 0.6f) {
+            if (rep.hot_bottom_z < 0.f) rep.hot_bottom_z = layer_zmax[L];
+            rep.hot_top_z = layer_zmax[L];
+        }
     }
     if (total > 0.) {
         rep.mean          = float(sum / total);
@@ -462,7 +520,7 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
             rep.fixes.emplace_back("QUICK", "Raise the minimum layer time rather than the part fan: this material warps when fan-cooled, it only needs time to set.");
         else
             rep.fixes.emplace_back("QUICK", "Raise the part cooling fan or the minimum layer time so small layers can cool before the next one lands.");
-        rep.fixes.emplace_back("ADVANCED", "Print several parts at once or add a sacrificial tower so every layer gets more time to cool.");
+        rep.fixes.emplace_back("ADVANCED", "Let Optimize pause away from the part on layers that cannot cool in time, or add a cooling tower next to the part so every small layer gets more time.");
         rep.fixes.emplace_back("EXPERT", "Lower the nozzle temperature a few degrees, or reduce wall count on fine features to shed heat faster.");
     } else if (rep.direction == "OVERCOOLING") {
         if (warp) {
@@ -482,7 +540,8 @@ ThermalReport ThermalQuality::simulate(const GCodeProcessorResult&   result,
 std::vector<float> ThermalQuality::optimize(const GCodeProcessorResult&   result,
                                             const std::vector<int>&       move_layers,
                                             const ThermalMaterials&       materials,
-                                            const ThermalOptimizeOptions& options)
+                                            const ThermalOptimizeOptions& options,
+                                            std::vector<float>*           layer_pauses)
 {
     int n_layers = 0;
     for (int L : move_layers) n_layers = std::max(n_layers, L + 1);
@@ -513,13 +572,32 @@ std::vector<float> ThermalQuality::optimize(const GCodeProcessorResult&   result
             factors[L] = std::clamp(factors[L], floor[L], cap[L]);
         }
     }
+    if (layer_pauses != nullptr) {
+        layer_pauses->assign(n_layers, 0.f);
+        if (options.max_pause > 0.f)
+            for (int pass = 0; pass < 3; ++pass) { // the model is not quite exponential (conduction, bed air), so refine
+                ThermalReport rep = simulate(result, move_layers, materials, &factors, &options, layer_pauses);
+                for (int L = 1; L < n_layers; ++L) {
+                    if (rep.layer_mean[L] <= 0.3f) continue; // still hot after slowing down: wait after the layer below
+                    const float T = rep.layer_substrate_temp[L], target = rep.layer_hot_edge[L], env = rep.layer_env[L - 1], tau = rep.layer_tau[L - 1];
+                    if (T <= target || target <= env || tau <= 0.f) continue;
+                    const float extra        = tau * std::log((T - env) / (target - env)); // Newton cooling from T down to the hot edge
+                    (*layer_pauses)[L - 1]   = std::clamp((*layer_pauses)[L - 1] + extra, 0.f, options.max_pause);
+                }
+            }
+        // The park trip itself (retract, lift, travel out and back) takes about a second: a shorter wait is not worth a mark.
+        for (float& p : *layer_pauses)
+            if (p < 0.5f) p = 0.f;
+    }
     return factors;
 }
 
 float ThermalQuality::time_factor(const GCodeProcessorResult& result, const std::vector<int>& move_layers,
-                                  const std::vector<float>& layer_speed_factors, const ThermalOptimizeOptions& options)
+                                  const std::vector<float>& layer_speed_factors, const ThermalOptimizeOptions& options,
+                                  const std::vector<float>* layer_pauses)
 {
     double before = 0., after = 0.;
+    if (layer_pauses != nullptr) for (float p : *layer_pauses) after += p;
     const std::vector<double> durations = move_durations(result, move_layers);
     for (size_t i = 1; i < result.moves.size(); ++i) {
         const auto& m = result.moves[i];
@@ -538,7 +616,8 @@ bool ThermalQuality::write_gcode(const ThermalGCodeText&       text,
                                  const std::vector<int>&       move_layers,
                                  const ThermalReport&          report,
                                  const std::vector<float>*     layer_speed_factors,
-                                 const ThermalOptimizeOptions* options)
+                                 const ThermalOptimizeOptions* options,
+                                 const std::vector<float>*     layer_pauses)
 {
     // line -> extrusion move producing it
     std::vector<int> line_move(text.lines.size() + 1, -1);
@@ -563,10 +642,15 @@ bool ThermalQuality::write_gcode(const ThermalGCodeText&       text,
     std::vector<double> scaled(result.moves.size(), 0.);
     std::vector<int>    line_any_move(text.lines.size() + 1, -1);
     const std::vector<double> durations = move_durations(result, move_layers);
+    int                       prev_L    = -1;
     for (size_t i = 1; i < result.moves.size(); ++i) {
         const auto& m  = result.moves[i];
         const int   L  = move_layers[i];
         double      dt = durations[i];
+        if (L != prev_L) {
+            if (prev_L >= 0 && layer_pauses != nullptr && prev_L < int(layer_pauses->size())) dt += (*layer_pauses)[prev_L];
+            prev_L = L;
+        }
         if (rescaled && L >= 0 && L < int(layer_speed_factors->size()) && eligible(m, L, *options)) dt /= std::max((*layer_speed_factors)[L], 0.05f);
         scaled[i] = scaled[i - 1] + dt;
         if (m.gcode_id < line_any_move.size()) line_any_move[m.gcode_id] = int(i);
@@ -574,12 +658,70 @@ bool ThermalQuality::write_gcode(const ThermalGCodeText&       text,
     const double total_time = scaled.empty() ? 0. : scaled.back();
     int          last_move  = 0;
 
+    // Cooling pauses: where the head parks. Outside the footprint of everything printed, inside the bed.
+    float bb_min_x = 1e9f, bb_min_y = 1e9f, bb_max_x = -1e9f, bb_max_y = -1e9f;
+    for (const LineInfo& li : infos)
+        if (li.motion && li.has_xy && li.has_e && li.e > 0.f && li.has_x && li.has_y) {
+            bb_min_x = std::min(bb_min_x, li.x); bb_max_x = std::max(bb_max_x, li.x);
+            bb_min_y = std::min(bb_min_y, li.y); bb_max_y = std::max(bb_max_y, li.y);
+        }
+    auto inside_bed = [&](float x, float y) { // even-odd test with a 3 mm margin, true when the outline is unknown
+        if (text.printable_area.size() < 3) return false;
+        for (const Vec2f d : {Vec2f(3.f, 0.f), Vec2f(-3.f, 0.f), Vec2f(0.f, 3.f), Vec2f(0.f, -3.f)}) {
+            const float px = x + d.x(), py = y + d.y();
+            bool in = false;
+            for (size_t a = 0, b = text.printable_area.size() - 1; a < text.printable_area.size(); b = a++) {
+                const Vec2f& p = text.printable_area[a];
+                const Vec2f& q = text.printable_area[b];
+                if ((p.y() > py) != (q.y() > py) && px < (q.x() - p.x()) * (py - p.y()) / (q.y() - p.y()) + p.x()) in = !in;
+            }
+            if (!in) return false;
+        }
+        return true;
+    };
+    auto park_point = [&](float cx, float cy, float& px, float& py) {
+        if (bb_min_x > bb_max_x) return false;
+        const float gap = 20.f;
+        const float cand[4][2] = {{cx, bb_min_y - gap}, {cx, bb_max_y + gap}, {bb_min_x - gap, cy}, {bb_max_x + gap, cy}};
+        for (const auto& c : cand)
+            if (inside_bed(c[0], c[1])) { px = c[0]; py = c[1]; return true; }
+        return false;
+    };
+    float cur_x = 0.f, cur_y = 0.f, cur_z = -1.f;
+    bool  have_xy = false;
+    const float retract = text.relative_e ? std::min(text.retraction_length, 2.f) : 0.f;
+
     boost::nowide::ofstream out(dst.c_str(), std::ios::out | std::ios::binary | std::ios::trunc);
     if (!out.good()) return false;
     for (size_t i = 0; i < text.lines.size(); ++i) {
         const size_t    idx1 = i + 1;
         const LineInfo& info = infos[i];
         std::string     line = text.lines[i];
+        if (layer_pauses != nullptr && boost::starts_with(line, "; CHANGE_LAYER")) {
+            const int prev = text.line_layers[idx1] - 1; // this line opens the next layer
+            if (prev >= 0 && prev < int(layer_pauses->size()) && (*layer_pauses)[prev] > 0.05f) {
+                const float sec = (*layer_pauses)[prev];
+                char        buf[160];
+                std::snprintf(buf, sizeof(buf), "; THERMAL_PAUSE %.1f s: park away from the part so layer %d can cool\n", sec, prev + 1);
+                out << buf;
+                float px = 0.f, py = 0.f;
+                const bool park = have_xy && park_point(cur_x, cur_y, px, py);
+                const float lift = park ? 2.f : 5.f; // no safe spot beside the part: at least get the hot nozzle away from it
+                if (retract > 0.f) { std::snprintf(buf, sizeof(buf), "G1 E-%.3f F%d\n", retract, int(text.retraction_speed * 60.f)); out << buf; }
+                if (cur_z >= 0.f) { std::snprintf(buf, sizeof(buf), "G1 Z%.3f F600\n", cur_z + lift); out << buf; }
+                if (park) { std::snprintf(buf, sizeof(buf), "G1 X%.3f Y%.3f F%d\n", px, py, int(text.travel_speed * 60.f)); out << buf; }
+                std::snprintf(buf, sizeof(buf), "G4 P%d\n", int(std::lround(sec * 1000.f))); out << buf;
+                if (park) { std::snprintf(buf, sizeof(buf), "G1 X%.3f Y%.3f F%d\n", cur_x, cur_y, int(text.travel_speed * 60.f)); out << buf; }
+                if (cur_z >= 0.f) { std::snprintf(buf, sizeof(buf), "G1 Z%.3f F600\n", cur_z); out << buf; }
+                if (retract > 0.f) { std::snprintf(buf, sizeof(buf), "G1 E%.3f F%d\n", retract, int(text.retraction_speed * 60.f)); out << buf; }
+            }
+        }
+        if (info.motion) {
+            if (info.has_x) cur_x = info.x;
+            if (info.has_y) cur_y = info.y;
+            if (info.has_z) cur_z = info.z;
+            if (info.has_x && info.has_y) have_xy = true;
+        }
         if (const size_t old_tag = line.find(std::string(" ") + Tag); old_tag != std::string::npos) line.erase(old_tag); // re-run: replace, never stack
         if (line_any_move[idx1] > last_move) last_move = line_any_move[idx1];
         if (rescaled && total_time > 0. && boost::starts_with(line, "M73 P") && line.find(" R") != std::string::npos) {

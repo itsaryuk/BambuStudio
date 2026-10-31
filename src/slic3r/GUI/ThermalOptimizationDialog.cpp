@@ -112,6 +112,15 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     m_keep_outer = new wxCheckBox(this, wxID_ANY, _L("Optimize: keep outer wall speeds unchanged (preserve surface finish)"));
     m_keep_outer->SetValue(options.keep_outer_walls);
     sizer->Add(m_keep_outer, 0, wxLEFT | wxRIGHT | wxTOP, pad);
+    auto* pause_row = new wxBoxSizer(wxHORIZONTAL);
+    m_pause = new wxCheckBox(this, wxID_ANY, _L("Optimize: pause away from the part on layers that cannot cool in time, up to"));
+    m_pause->SetValue(options.max_pause > 0.f);
+    m_pause->SetToolTip(_L("Where even the slowest allowed speed leaves a layer too hot (small tips, pins), the head retracts, lifts, parks beside the part and waits the seconds the model asks for, then returns. Adds print time; a small mark can show where printing resumes."));
+    pause_row->Add(m_pause, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+    m_pause_cap = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(70), -1), wxSP_ARROW_KEYS, 1, 60, options.max_pause > 0.f ? int(options.max_pause) : 15);
+    pause_row->Add(m_pause_cap, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+    pause_row->Add(new Label(this, Label::Body_13, _L("s per layer")), 0, wxALIGN_CENTER_VERTICAL);
+    sizer->Add(pause_row, 0, wxLEFT | wxRIGHT | wxTOP, pad);
 
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer();
@@ -153,6 +162,7 @@ ThermalOptimizeOptions ThermalOptimizationInputDialog::get_options() const
     o.min_speed_factor       = 1.f - m_slow_down->GetValue() / 100.f;
     o.max_volumetric         = m_max_volumetric->GetValue() > 0. ? float(m_max_volumetric->GetValue()) : -1.f;
     o.keep_outer_walls       = m_keep_outer->GetValue();
+    o.max_pause              = m_pause->GetValue() ? float(m_pause_cap->GetValue()) : 0.f;
     return o;
 }
 
@@ -276,7 +286,7 @@ ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* paren
                                       seconds_text(saved), seconds_text(original_time_seconds), seconds_text(original_time_seconds - saved)));
         }
     }
-    finish(offer);
+    finish(offer, report.hot_top_z > 0.f ? report.hot_top_z : 0.f);
 }
 
 ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* parent, int original_time_seconds, int optimized_time_seconds,
@@ -296,6 +306,8 @@ ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* paren
     if (summary.layers > 0) {
         add_line(wxString::Format(_L("Mean thermal index %.2f → %.2f, spread %.2f → %.2f. Layers slowed down: %d of %d, sped up: %d."),
                                   summary.mean_before, summary.mean_after, summary.std_before, summary.std_after, summary.slowed, summary.layers, summary.sped_up));
+        if (summary.paused > 0)
+            add_line(wxString::Format(_L("Cooling pauses: %d layers, %s in total, the head parked beside the part."), summary.paused, seconds_text(int(std::lround(summary.pause_total)))));
         if (std::abs(summary.mean_before) < 0.2f && summary.std_before < 0.3f)
             add_line(_L("The plate was already close to the comfort window, so there was little to rebalance; a low improvement grade is expected."));
         else if (summary.slowed == summary.layers - 1 && summary.sped_up == 0)
@@ -321,9 +333,19 @@ void ThermalOptimizationResultDialog::add_line(const wxString& text, bool bold)
     m_sizer->Add(label, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(bold ? 8 : 6));
 }
 
-void ThermalOptimizationResultDialog::finish(bool offer_optimize)
+void ThermalOptimizationResultDialog::finish(bool offer_optimize, float cooling_tower_height)
 {
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
+    if (cooling_tower_height > 0.f) {
+        const float h     = std::ceil(cooling_tower_height + 2.f);
+        auto*       tower = make_button(this, wxString::Format(_L("Add cooling tower (%.0f mm)"), h), false);
+        tower->SetToolTip(_L("Adds a thin hollow cylinder beside the part, as tall as the hot region. While it prints, every small layer of the part gets that much more time to cool, with no pause and no mark. Slice again afterwards."));
+        tower->Bind(wxEVT_BUTTON, [this, h](wxCommandEvent&) {
+            EndModal(wxID_CANCEL);
+            wxGetApp().plater()->CallAfter([h]() { wxGetApp().plater()->add_thermal_cooling_tower(h); });
+        });
+        buttons->Add(tower, 0, wxRIGHT, FromDIP(8));
+    }
     buttons->AddStretchSpacer();
     if (offer_optimize) {
         auto* optimize = make_button(this, _L("Optimize now"), true);
