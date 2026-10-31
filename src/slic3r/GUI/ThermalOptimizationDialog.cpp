@@ -14,11 +14,75 @@
 #include "Plater.hpp"
 #include "Widgets/Button.hpp"
 #include "Widgets/Label.hpp"
+#include "libslic3r/AppConfig.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Utils.hpp"
+
+#include <boost/algorithm/string.hpp>
+#include <boost/format.hpp>
 
 namespace Slic3r { namespace GUI {
 
 bool& get_helio_pre_select_optimization_flag();
+
+std::string thermal_calibration_key(const std::string& filament_type)
+{
+    const auto* model = wxGetApp().preset_bundle->full_config().option<ConfigOptionString>("printer_model");
+    return "cooling_" + boost::to_upper_copy(filament_type) + "@" + (model != nullptr ? model->value : std::string());
+}
+
+ThermalCalibration thermal_calibration_find(const std::string& filament_type)
+{
+    const AppConfig*  cfg = wxGetApp().app_config;
+    ThermalCalibration c;
+    const std::string own = thermal_calibration_key(filament_type);
+    const std::string old = "cooling_" + boost::to_upper_copy(filament_type); // before printers were recorded
+    if (cfg->has("thermal", own)) c.key = own;
+    else if (cfg->has("thermal", old)) c.key = old;
+    else if (cfg->has_section("thermal"))
+        for (const auto& [k, v] : cfg->get_section("thermal"))
+            if (boost::starts_with(k, old + "@") && !boost::ends_with(k, "_note") && !boost::ends_with(k, "_layer")) { c.key = k; c.other_printer = true; break; }
+    if (!c.key.empty()) c.layer_height = float(std::atof(cfg->get("thermal", c.key + "_layer").c_str()));
+    return c;
+}
+
+std::string thermal_setup_note()
+{
+    const DynamicPrintConfig& cfg    = wxGetApp().preset_bundle->full_config();
+    const auto*               model  = cfg.option<ConfigOptionString>("printer_model");
+    const auto*               nozzle = cfg.option<ConfigOptionFloats>("nozzle_diameter");
+    const auto*               volume = cfg.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+    const auto*               layer  = cfg.option<ConfigOptionFloat>("layer_height");
+    std::string s = model != nullptr ? model->value : std::string();
+    if (nozzle != nullptr && !nozzle->values.empty())
+        s += (boost::format(", %.1f mm%s nozzle") % nozzle->values.front() % (volume != nullptr && !volume->values.empty() && volume->values.front() == nvtHighFlow ? " high flow" : "")).str();
+    if (layer != nullptr) s += (boost::format(", %.2f mm layers") % layer->value).str();
+    return s;
+}
+
+wxString thermal_calibration_warnings()
+{
+    const DynamicPrintConfig& cfg   = wxGetApp().preset_bundle->full_config();
+    const auto*               types = cfg.option<ConfigOptionStrings>("filament_type");
+    const auto*               layer = cfg.option<ConfigOptionFloat>("layer_height");
+    std::vector<std::string>  seen;
+    wxString                  out;
+    for (const std::string& t : types != nullptr ? types->values : std::vector<std::string>()) {
+        if (std::find(seen.begin(), seen.end(), t) != seen.end()) continue;
+        seen.push_back(t);
+        const ThermalCalibration c    = thermal_calibration_find(t);
+        const wxString           note = wxString::FromUTF8(wxGetApp().app_config->get("thermal", c.key + "_note"));
+        wxString                 line;
+        if (c.key.empty()) continue;
+        if (c.other_printer)
+            line = wxString::Format(_L("%s was calibrated on another printer (%s). Airflow differs between printers, so calibrate on this one."), wxString::FromUTF8(t), note);
+        else if (layer != nullptr && c.layer_height > 0.f && (layer->value > c.layer_height * 1.5f || layer->value < c.layer_height / 1.5f))
+            line = wxString::Format(_L("%s was calibrated at %.2f mm layers and this print uses %.2f mm. The model scales cooling with layer height; a tower at this height is more exact."),
+                                    wxString::FromUTF8(t), c.layer_height, layer->value);
+        if (!line.empty()) out += (out.empty() ? "" : "\n") + line;
+    }
+    return out;
+}
 
 namespace {
 
@@ -77,8 +141,13 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     }
     sizer->Add(text(_L("Material model"), Label::Head_13), 0, wxLEFT | wxRIGHT, pad);
     sizer->Add(text(mats), 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
+    if (const wxString warn = thermal_calibration_warnings(); !warn.empty()) {
+        auto* w = text(warn, Label::Body_12);
+        w->SetForegroundColour(wxColour("#E07B00"));
+        sizer->Add(w, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
+    }
     auto* calib_row = new wxBoxSizer(wxHORIZONTAL);
-    calib_row->Add(text(any_calibrated ? _L("Recalibrate after changing filament, nozzle or cooling setup.") :
+    calib_row->Add(text(any_calibrated ? _L("Recalibrate after changing filament, printer or fan setup.") :
                                          _L("A 15-minute tower print makes the model match this filament. Without it the ratings are estimates."), Label::Body_12), 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     auto* calibrate = make_button(this, any_calibrated ? _L("Recalibrate…") : _L("Calibrate…"), !any_calibrated);
     calibrate->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {

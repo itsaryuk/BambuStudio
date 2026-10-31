@@ -15884,7 +15884,7 @@ ThermalMaterials Plater::priv::thermal_materials(const GCodeProcessorResult* g_r
         p.calibrate_cooling_from_preset(float(int_at("slow_down_layer_time", f, 0)), float(int_at("fan_max_speed", f, 100)),
                                         float(int_at("nozzle_temperature", f, 0)), std::max(chamber_temp, p.room_temp));
         // A printed tower may have calibrated the cooling constant for this filament type; it beats the preset-derived one.
-        const std::string calibrated = wxGetApp().app_config->get("thermal", "cooling_" + boost::to_upper_copy(type));
+        const std::string calibrated = wxGetApp().app_config->get("thermal", thermal_calibration_find(type).key);
         if (!calibrated.empty()) { p.cooling_time_const = std::stof(calibrated); p.calibrated = true; }
         params.push_back(p);
     }
@@ -15923,9 +15923,16 @@ wxString Plater::priv::thermal_calibrate(float height)
     ThermalMaterials          fresh   = mats;
     fresh[std::min<size_t>(size_t(std::max(slot, 0)), fresh.size() - 1)].cooling_time_const = class_tau; // fit from the class value, not the last calibration
     const float    tau  = ThermalQuality::fit_cooling_constant(*g_result, move_layers, fresh, slot, layer, target, &bounded);
-    const wxString note = wxString::Format("%s, %.1f mm", wxDateTime::Now().FormatISODate(), height);
-    wxGetApp().app_config->set("thermal", "cooling_" + type, std::to_string(tau));
-    wxGetApp().app_config->set("thermal", "cooling_" + type + "_note", into_u8(note));
+    const wxString    note = wxString::Format("%s, %.1f mm, %s", wxDateTime::Now().FormatISODate(), height, wxString::FromUTF8(thermal_setup_note()));
+    const std::string key  = thermal_calibration_key(type);
+    const auto*       lh   = cfg.option<ConfigOptionFloat>("layer_height");
+    wxGetApp().app_config->set("thermal", key, std::to_string(tau));
+    wxGetApp().app_config->set("thermal", key + "_note", into_u8(note));
+    wxGetApp().app_config->set("thermal", key + "_layer", std::to_string(lh != nullptr ? lh->value : 0.));
+    if (key != "cooling_" + type) { // the printer-less entry from older builds is superseded on this printer
+        wxGetApp().app_config->erase("thermal", "cooling_" + type);
+        wxGetApp().app_config->erase("thermal", "cooling_" + type + "_note");
+    }
     wxGetApp().app_config->erase("app", "thermal_half_width_" + type); // older builds scaled the window instead
     wxGetApp().app_config->erase("app", "thermal_cooling_" + type);
     wxGetApp().app_config->save();
@@ -21572,11 +21579,12 @@ void Plater::open_thermal_calibration()
             seen.push_back(t);
             if (!st.material.empty()) st.material += ", ";
             st.material += wxString::FromUTF8(t);
-            const std::string key = "cooling_" + boost::to_upper_copy(t);
-            if (wxGetApp().app_config->has("thermal", key)) {
+            const ThermalCalibration c = thermal_calibration_find(t);
+            if (!c.key.empty()) {
                 if (!st.stored.empty()) st.stored += "\n";
-                st.stored += wxString::Format(_L("%s: cooling constant %s s, calibrated %s."), wxString::FromUTF8(t), wxString::FromUTF8(wxGetApp().app_config->get("thermal", key)).substr(0, 4),
-                                              wxString::FromUTF8(wxGetApp().app_config->get("thermal", key + "_note")));
+                st.stored += wxString::Format(c.other_printer ? _L("%s: cooling constant %s s, calibrated on another printer %s.") : _L("%s: cooling constant %s s, calibrated %s."),
+                                              wxString::FromUTF8(t), wxString::FromUTF8(wxGetApp().app_config->get("thermal", c.key)).substr(0, 4),
+                                              wxString::FromUTF8(wxGetApp().app_config->get("thermal", c.key + "_note")));
             }
         }
     if (st.material.empty()) st.material = _L("the loaded filament");

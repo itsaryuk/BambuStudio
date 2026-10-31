@@ -42,6 +42,20 @@ private:
     wxSpinCtrl*            m_pause_cap{nullptr};
 };
 
+// Tower calibrations are stored per filament type and printer model: printers differ in airflow, which the model cannot
+// see. Layer height and fan are scaled by the model, so they are only recorded in the note.
+struct ThermalCalibration
+{
+    std::string key;                 // app config key in section "thermal", empty when not calibrated
+    bool        other_printer{false}; // found only for another printer model
+    float       layer_height{0.f};   // of the calibration tower, 0 when not recorded
+};
+std::string        thermal_calibration_key(const std::string& filament_type); // where a calibration on this printer goes
+ThermalCalibration thermal_calibration_find(const std::string& filament_type);
+std::string        thermal_setup_note(); // printer, nozzle and layer height of the loaded presets
+// One line per calibrated filament type whose calibration came from another printer or another layer height.
+wxString           thermal_calibration_warnings();
+
 // Three steps from a printed tower to a calibrated model: create and print the tower, read it, enter the height.
 class ThermalCalibrationDialog : public DPIDialog
 {
