@@ -2987,6 +2987,10 @@ void HelioBackgroundProcess::run_local_engine()
         rating.qualityMeanImprovement = ThermalQuality::quality_grade(std::abs(report.mean), std::abs(after.mean));
         rating.qualityStdImprovement  = ThermalQuality::quality_grade(report.stddev, after.stddev);
         local_summary = ThermalOptimizeSummary{report.mean, after.mean, report.stddev, after.stddev, int(factors.size()), 0, 0};
+        local_summary.hot_after    = after.hot_fraction;
+        local_summary.cold_after   = after.cold_fraction;
+        local_summary.hot_bottom_z = after.hot_bottom_z;
+        local_summary.hot_top_z    = after.hot_top_z;
         for (float x : factors) {
             if (x < 0.999f) ++local_summary.slowed;
             if (x > 1.001f) ++local_summary.sped_up;

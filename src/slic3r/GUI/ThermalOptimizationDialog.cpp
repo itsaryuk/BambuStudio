@@ -6,6 +6,8 @@
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/statbmp.h>
+#include <wx/panel.h>
+#include <wx/radiobut.h>
 
 #include "Event.hpp"
 #include "GUI_App.hpp"
@@ -118,97 +120,144 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
 {
     SetBackgroundColour(*wxWHITE);
     auto* sizer = new wxBoxSizer(wxVERTICAL);
-    const int pad = FromDIP(12), width = FromDIP(480);
-    auto text = [&](const wxString& t, const wxFont& font = Label::Body_13) {
-        auto* l = new Label(this, font, t, LB_AUTO_WRAP);
-        l->SetMinSize(wxSize(width, -1));
-        l->Wrap(width);
+    const int pad = FromDIP(16), width = FromDIP(460);
+    auto text = [&](wxWindow* p, const wxString& t, const wxFont& font = Label::Body_13, int w = 0) {
+        auto* l = new Label(p, font, t, LB_AUTO_WRAP);
+        l->SetMinSize(wxSize(w > 0 ? w : width, -1));
+        l->Wrap(w > 0 ? w : width);
         return l;
     };
 
-    sizer->Add(text(_L("Simulates how warm each layer still is when the next one lands and rates every toolpath from cold (-1) to hot (+1). Runs on this computer.")), 0, wxALL, pad);
+    // 1. What to do: two choices, each with one sentence.
+    sizer->Add(text(this, _L("What do you want to do?"), Label::Head_14), 0, wxLEFT | wxRIGHT | wxTOP, pad);
+    auto choice = [&](wxRadioButton* rb, const wxString& line) {
+        rb->SetFont(Label::Head_13);
+        sizer->Add(rb, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
+        sizer->Add(text(this, line, Label::Body_12, width - FromDIP(24)), 0, wxLEFT, pad + FromDIP(24));
+    };
+    m_check  = new wxRadioButton(this, wxID_ANY, _L("Check temperatures"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP);
+    m_adjust = new wxRadioButton(this, wxID_ANY, _L("Adjust layer speeds"));
+    choice(m_check, _L("See which layers land on material that is still too warm or already too cold. The G-code stays as sliced."));
+    choice(m_adjust, _L("Slow down hot layers and speed up cold ones within safe limits, then load the adjusted G-code."));
+    m_check->SetValue(!preselect_optimize);
+    m_adjust->SetValue(preselect_optimize);
 
-    // What the model is working with, and whether a printed tower has tuned it.
-    bool     any_calibrated = false;
-    wxString mats;
+    // 2. How much to trust the ratings: calibration status per filament, one line each.
+    sizer->AddSpacer(FromDIP(14));
+    bool     any_calibrated = false, any_default = false;
+    wxString status;
     for (const ThermalModelParams& m : params) {
         if (m.material.empty()) continue;
-        if (!mats.empty()) mats += "\n";
-        mats += wxString::Format(m.calibrated ? _L("%s: comfort window %.0f ± %.0f °C, cooling constant %.1f s from your calibration tower.") :
-                                                _L("%s: comfort window %.0f ± %.0f °C, cooling constant %.1f s from material defaults (not calibrated)."),
-                                 wxString::FromUTF8(m.material), m.ideal_substrate_temp, m.window_half_width, m.cooling_time_const);
+        if (!status.empty()) status += "\n";
+        status += wxString::Format(m.calibrated ? _L("%s: calibrated with a printed tower.") : _L("%s: not calibrated, ratings are estimates."), wxString::FromUTF8(m.material));
         any_calibrated |= m.calibrated;
-    }
-    sizer->Add(text(_L("Material model"), Label::Head_13), 0, wxLEFT | wxRIGHT, pad);
-    sizer->Add(text(mats), 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
-    if (const wxString warn = thermal_calibration_warnings(); !warn.empty()) {
-        auto* w = text(warn, Label::Body_12);
-        w->SetForegroundColour(wxColour("#E07B00"));
-        sizer->Add(w, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
+        any_default |= !m.calibrated;
     }
     auto* calib_row = new wxBoxSizer(wxHORIZONTAL);
-    calib_row->Add(text(any_calibrated ? _L("Recalibrate after changing filament, printer or fan setup.") :
-                                         _L("A 15-minute tower print makes the model match this filament. Without it the ratings are estimates."), Label::Body_12), 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
-    auto* calibrate = make_button(this, any_calibrated ? _L("Recalibrate…") : _L("Calibrate…"), !any_calibrated);
+    calib_row->Add(text(this, status, Label::Body_13, width - FromDIP(130)), 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    auto* calibrate = make_button(this, any_calibrated && !any_default ? _L("Recalibrate…") : _L("Calibrate…"), false);
+    calibrate->SetToolTip(_L("A 15-minute tower print tunes the model to this filament on this printer. Recalibrate after changing filament, printer or fan setup."));
     calibrate->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         EndModal(wxID_CANCEL);
         wxGetApp().plater()->CallAfter([]() { wxGetApp().plater()->open_thermal_calibration(); });
     });
     calib_row->Add(calibrate, 0, wxALIGN_CENTER_VERTICAL);
-    sizer->Add(calib_row, 0, wxLEFT | wxRIGHT | wxTOP | wxEXPAND, FromDIP(6));
+    sizer->Add(calib_row, 0, wxLEFT | wxRIGHT | wxEXPAND, pad);
+    if (const wxString warn = thermal_calibration_warnings(); !warn.empty()) {
+        auto* w = text(this, warn, Label::Body_12);
+        w->SetForegroundColour(wxColour("#E07B00"));
+        sizer->Add(w, 0, wxLEFT | wxRIGHT | wxTOP, pad);
+    }
 
-    sizer->Add(text(_L("Environment and limits"), Label::Head_13), 0, wxLEFT | wxRIGHT | wxTOP, pad);
-    auto* grid = new wxFlexGridSizer(2, FromDIP(6), FromDIP(10));
-    grid->AddGrowableCol(1);
-    auto row = [&](const wxString& name, wxWindow* ctrl) {
-        grid->Add(new Label(this, Label::Body_13, name), 0, wxALIGN_CENTER_VERTICAL);
+    // 3. Settings, folded: most people never need them.
+    auto* toggle = new Label(this, Label::Body_13, wxString::FromUTF8("▸ ") + _L("Settings"));
+    toggle->SetForegroundColour(wxColour(0, 174, 66));
+    toggle->SetCursor(wxCursor(wxCURSOR_HAND));
+    sizer->Add(toggle, 0, wxLEFT | wxRIGHT | wxTOP, pad);
+    auto* panel = new wxPanel(this);
+    panel->SetBackgroundColour(*wxWHITE);
+    auto* psizer = new wxBoxSizer(wxVERTICAL);
+    auto* grid   = new wxFlexGridSizer(2, FromDIP(6), FromDIP(10));
+    grid->AddGrowableCol(0);
+    auto row = [&](const wxString& name, wxWindow* ctrl, const wxString& tip) {
+        auto* l = new Label(panel, Label::Body_13, name);
+        l->SetToolTip(tip);
+        ctrl->SetToolTip(tip);
+        grid->Add(l, 0, wxALIGN_CENTER_VERTICAL);
         grid->Add(ctrl, 0, wxALIGN_CENTER_VERTICAL);
+        return l;
     };
-    m_chamber = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0, 120,
+    m_chamber = new wxSpinCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(80), -1), wxSP_ARROW_KEYS, 0, 120,
                                int(std::max(0.f, params.empty() ? 0.f : params.front().chamber_temp)));
-    m_chamber->SetToolTip(_L("Prefilled from the printer and filament presets: a heated chamber, or the bed warming an enclosure."));
-    row(_L("Chamber air temperature (°C, 0 = open frame)"), m_chamber);
-    m_speed_up = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0, 100,
+    row(_L("Air around the part (°C, 0 = open frame)"), m_chamber, _L("Prefilled from the printer and filament presets: a heated chamber, or the bed warming an enclosure."));
+    m_speed_up = new wxSpinCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(80), -1), wxSP_ARROW_KEYS, 0, 100,
                                 int(std::lround((options.max_speed_factor - 1.f) * 100.f)));
-    row(_L("Optimize: maximum speed-up on cold layers (%)"), m_speed_up);
-    m_slow_down = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0, 90,
+    auto* l_up = row(_L("Speed up cold layers by at most (%)"), m_speed_up, _L("Cold layers print faster, up to this much and never past the filament's volumetric limit."));
+    m_slow_down = new wxSpinCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(80), -1), wxSP_ARROW_KEYS, 0, 90,
                                  int(std::lround((1.f - options.min_speed_factor) * 100.f)));
-    row(_L("Optimize: maximum slow-down on hot layers (%)"), m_slow_down);
-    m_max_volumetric = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0., 100.,
+    auto* l_down = row(_L("Slow down hot layers by at most (%)"), m_slow_down, _L("Hot layers print slower, down to this much and never below the filament's minimum speed."));
+    m_max_volumetric = new wxSpinCtrlDouble(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(80), -1), wxSP_ARROW_KEYS, 0., 100.,
                                             std::max(0.f, options.max_volumetric), 0.5);
-    row(_L("Optimize: maximum volumetric speed (mm³/s, 0 = filament limit)"), m_max_volumetric);
-    sizer->Add(grid, 0, wxLEFT | wxRIGHT | wxTOP | wxEXPAND, FromDIP(6));
-    m_keep_outer = new wxCheckBox(this, wxID_ANY, _L("Optimize: keep outer wall speeds unchanged (preserve surface finish)"));
+    auto* l_vol = row(_L("Volumetric speed limit (mm³/s, 0 = filament's)"), m_max_volumetric, _L("Upper flow limit for sped-up layers. 0 uses the filament profile's maximum volumetric speed."));
+    psizer->Add(grid, 0, wxEXPAND | wxTOP, FromDIP(6));
+    m_keep_outer = new wxCheckBox(panel, wxID_ANY, _L("Keep outer wall speeds (surface finish stays as sliced)"));
     m_keep_outer->SetValue(options.keep_outer_walls);
-    sizer->Add(m_keep_outer, 0, wxLEFT | wxRIGHT | wxTOP, pad);
+    psizer->Add(m_keep_outer, 0, wxTOP, FromDIP(10));
     auto* pause_row = new wxBoxSizer(wxHORIZONTAL);
-    m_pause = new wxCheckBox(this, wxID_ANY, _L("Optimize: pause away from the part on layers that cannot cool in time, up to"));
+    m_pause = new wxCheckBox(panel, wxID_ANY, _L("Pause beside the part when a layer cannot cool in time, up to"));
     m_pause->SetValue(options.max_pause > 0.f);
-    m_pause->SetToolTip(_L("Where even the slowest allowed speed leaves a layer too hot (small tips, pins), the head retracts, lifts, parks beside the part and waits the seconds the model asks for, then returns. Adds print time; a small mark can show where printing resumes."));
+    m_pause->SetToolTip(_L("For small tips and pins that stay hot even at the slowest speed: the head lifts, parks beside the part and waits, then returns. Adds print time; a small mark can show where printing resumes."));
     pause_row->Add(m_pause, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
-    m_pause_cap = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(70), -1), wxSP_ARROW_KEYS, 1, 60, options.max_pause > 0.f ? int(options.max_pause) : 15);
-    m_pause_cap->Enable(m_pause->GetValue());
-    m_pause->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) { m_pause_cap->Enable(m_pause->GetValue()); });
+    m_pause_cap = new wxSpinCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(64), -1), wxSP_ARROW_KEYS, 1, 60, options.max_pause > 0.f ? int(options.max_pause) : 15);
     pause_row->Add(m_pause_cap, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
-    pause_row->Add(new Label(this, Label::Body_13, _L("s per layer")), 0, wxALIGN_CENTER_VERTICAL);
-    sizer->Add(pause_row, 0, wxLEFT | wxRIGHT | wxTOP, pad);
+    pause_row->Add(new Label(panel, Label::Body_13, _L("s per layer")), 0, wxALIGN_CENTER_VERTICAL);
+    psizer->Add(pause_row, 0, wxTOP, FromDIP(8));
+    // Model constants for the curious.
+    wxString model;
+    for (const ThermalModelParams& m : params)
+        if (!m.material.empty())
+            model += (model.empty() ? "" : "\n") + wxString::Format(_L("%s: comfortable at %.0f ± %.0f °C, cooling constant %.1f s."),
+                                                                     wxString::FromUTF8(m.material), m.ideal_substrate_temp, m.window_half_width, m.cooling_time_const);
+    auto* model_text = text(panel, model, Label::Body_12);
+    model_text->SetForegroundColour(wxColour(120, 120, 120));
+    psizer->Add(model_text, 0, wxTOP, FromDIP(10));
+    panel->SetSizer(psizer);
+    panel->Hide();
+    sizer->Add(panel, 0, wxLEFT | wxRIGHT | wxEXPAND, pad);
+
+    // Speed settings only matter when adjusting.
+    auto sync = [=]() {
+        const bool adjust = m_adjust->GetValue();
+        for (wxWindow* w : std::initializer_list<wxWindow*>{l_up, m_speed_up, l_down, m_slow_down, l_vol, m_max_volumetric, m_keep_outer, m_pause}) w->Enable(adjust);
+        m_pause_cap->Enable(adjust && m_pause->GetValue());
+    };
+    m_check->Bind(wxEVT_RADIOBUTTON, [=](wxCommandEvent&) { sync(); });
+    m_adjust->Bind(wxEVT_RADIOBUTTON, [=](wxCommandEvent&) { sync(); });
+    m_pause->Bind(wxEVT_CHECKBOX, [=](wxCommandEvent&) { sync(); });
+    sync();
+    toggle->Bind(wxEVT_LEFT_DOWN, [this, toggle, panel](wxMouseEvent&) {
+        panel->Show(!panel->IsShown());
+        toggle->SetLabel(wxString::FromUTF8(panel->IsShown() ? "▾ " : "▸ ") + _L("Settings"));
+        Layout();
+        Fit();
+    });
+
+    // 4. Why the buttons are disabled, when they are.
+    if (!plate_ready) {
+        auto* why = text(this, _L("Slice the plate first. Calibration works without a slice."), Label::Body_12);
+        why->SetForegroundColour(wxColour("#E07B00"));
+        sizer->Add(why, 0, wxLEFT | wxRIGHT | wxTOP, pad);
+    }
 
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer();
-    auto* cancel   = make_button(this, _L("Cancel"), false);
-    auto* analyze  = make_button(this, _L("Analyze"), !preselect_optimize);
-    auto* optimize = make_button(this, _L("Optimize"), preselect_optimize);
-    analyze->SetToolTip(plate_ready ? _L("Rate layer temperatures and show them in the preview. The G-code stays as sliced.") : _L("Slice the plate first."));
-    optimize->SetToolTip(plate_ready ? _L("Rescale layer speeds within the limits above so every layer lands in the comfort window, then load the result.") : _L("Slice the plate first."));
-    analyze->Enable(plate_ready);
-    optimize->Enable(plate_ready);
-    if (!plate_ready) sizer->Add(text(_L("Slice the plate to analyze or optimize it. Calibration is available any time."), Label::Body_12), 0, wxLEFT | wxRIGHT | wxTOP, pad);
+    auto* cancel = make_button(this, _L("Cancel"), false);
+    auto* run    = make_button(this, _L("Start"), true);
+    run->Enable(plate_ready);
     cancel->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
-    analyze->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { m_action = 0; EndModal(wxID_OK); });
-    optimize->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { m_action = 1; EndModal(wxID_OK); });
+    run->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { m_action = m_adjust->GetValue() ? 1 : 0; EndModal(wxID_OK); });
     buttons->Add(cancel, 0, wxRIGHT, FromDIP(8));
-    buttons->Add(analyze, 0, wxRIGHT, FromDIP(8));
-    buttons->Add(optimize, 0);
+    buttons->Add(run, 0);
     sizer->Add(buttons, 0, wxALL | wxEXPAND, pad);
 
     SetSizer(sizer);
@@ -313,35 +362,35 @@ ThermalCalibrationDialog::ThermalCalibrationDialog(wxWindow* parent, const State
     wxGetApp().UpdateDlgDarkUI(this);
 }
 
+namespace {
+const wxColour TONE_GOOD(0, 174, 66), TONE_WARN(224, 123, 0), TONE_BAD(214, 54, 40);
+
+wxString z_range(float lo, float hi)
+{
+    return lo >= 0.f && hi > lo + 0.05f ? wxString::Format(_L("between %.1f and %.1f mm"), lo, hi) : wxString::Format(_L("around %.1f mm"), std::max(lo, hi));
+}
+} // namespace
+
 ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* parent, const ThermalReport& report, int original_time_seconds,
                                                                  const std::vector<std::pair<ExtrusionRole, float>>& roles_times)
     : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, TITLE, wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
-    wxString outcome = report.outcome == "WILL_PRINT" ? _L("Thermal conditions look good") :
-                       report.outcome == "MAY_PRINT"  ? _L("Thermal conditions are marginal") :
-                                                        _L("Thermal conditions are likely to cause defects");
-    init(outcome);
+    const bool good = report.outcome == "WILL_PRINT", marginal = report.outcome == "MAY_PRINT";
+    init(good ? _L("Temperatures look good") : marginal ? _L("Some layers are at risk") : _L("Likely to cause defects"), good ? TONE_GOOD : marginal ? TONE_WARN : TONE_BAD);
 
-    if (report.direction == "OVERCOOLING")
-        add_line(_L("Material cools too far before the next layer is applied. This can cause weak layer bonding, warping, or cracking."));
-    else if (report.direction == "OVERHEATING")
-        add_line(_L("Heat builds up in small layers faster than it can dissipate. This may cause sagging or loss of detail in fine features."));
+    // The verdict in one sentence, then where.
+    if (report.direction == "OVERHEATING")
+        add_line(_L("Small layers do not get enough time to cool. Expect sagging, rough walls or a blob at the top."));
+    else if (report.direction == "OVERCOOLING")
+        add_line(_L("Layers cool too far before the next one lands. Expect weak layer bonds, warping or cracks."));
     else
-        add_line(_L("Layers land within the comfort window of this material."));
-
-    add_line(wxString::Format(_L("Mean thermal index %.2f, spread %.2f. Hot toolpaths %d%%, cold toolpaths %d%% of print time."),
-                              report.mean, report.stddev, int(std::lround(report.hot_fraction * 100)), int(std::lround(report.cold_fraction * 100))));
-
-    for (const std::string& c : report.caveats) add_line(wxString::FromUTF8("- " + c));
-    for (const std::string& a : report.assumptions) add_line(wxString::FromUTF8(a));
-
-    if (!report.fixes.empty()) {
-        add_line(_L("Suggestions"), true);
-        for (const auto& f : report.fixes) {
-            wxString cat = f.first == "QUICK" ? _L("Quick") : f.first == "ADVANCED" ? _L("Advanced") : _L("Expert");
-            add_line(wxString::Format("- %s: %s", cat, wxString::FromUTF8(f.second)));
-        }
-    }
+        add_line(_L("Every layer lands on material at a comfortable temperature."));
+    const int hot = int(std::lround(report.hot_fraction * 100)), cold = int(std::lround(report.cold_fraction * 100));
+    if (hot > 0)
+        add_line(wxString::Format(_L("Too hot: %d%% of the print time, %s."), hot, z_range(report.hot_bottom_z, report.hot_top_z)));
+    if (cold > 0) add_line(wxString::Format(_L("Too cold: %d%% of the print time."), cold));
+    add_scale();
+    add_line(_L("The preview is coloured by this rating."));
 
     bool offer = false;
     if (report.suggested_speed_factor < 0.999f && original_time_seconds > 0) {
@@ -352,11 +401,25 @@ ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* paren
         const int saved = int(optimizable * (1.f - report.suggested_speed_factor));
         if (saved > 0) {
             offer = true;
-            add_line(_L("Potential saving"), true);
-            add_line(wxString::Format(_L("Optimize could save about %s (%s → %s) without leaving the comfort window."),
-                                      seconds_text(saved), seconds_text(original_time_seconds), seconds_text(original_time_seconds - saved)));
+            add_line(wxString::Format(_L("Adjusting layer speeds could also save about %s (%s → %s)."), seconds_text(saved), seconds_text(original_time_seconds),
+                                      seconds_text(original_time_seconds - saved)));
         }
     }
+    offer |= !good; // adjusting speeds is the first remedy for a bad rating
+
+    // What to do, quickest first; everything else folds away.
+    if (!report.fixes.empty()) {
+        add_line(_L("What you can do"), true);
+        int n = 0;
+        for (const auto& f : report.fixes)
+            if (n++ < 3) add_line(wxString::FromUTF8("• " + f.second));
+    }
+    std::vector<wxString> details;
+    details.push_back(wxString::Format(_L("Mean thermal index %.2f, spread %.2f (−1 cold, 0 comfortable, +1 hot)."), report.mean, report.stddev));
+    for (size_t i = 3; i < report.fixes.size(); ++i) details.push_back(wxString::FromUTF8("• " + report.fixes[i].second));
+    for (const std::string& c : report.caveats) details.push_back(wxString::FromUTF8("• " + c));
+    for (const std::string& a : report.assumptions) details.push_back(wxString::FromUTF8(a));
+    add_details(details);
     finish(offer, report.hot_top_z > 0.f ? report.hot_top_z : 0.f);
 }
 
@@ -365,37 +428,55 @@ ThermalOptimizationResultDialog::ThermalOptimizationResultDialog(wxWindow* paren
                                                                  const ThermalOptimizeSummary& summary)
     : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, TITLE, wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
-    init(_L("Layer speeds rebalanced"));
+    const int  hot   = int(std::lround(summary.hot_after * 100)), cold = int(std::lround(summary.cold_after * 100));
+    const bool clean = summary.layers > 0 && hot <= 2 && cold <= 2;
+    init(clean ? _L("Layer speeds adjusted") : _L("Layer speeds adjusted, some layers still at risk"), clean ? TONE_GOOD : TONE_WARN);
+
     const int diff = original_time_seconds - optimized_time_seconds;
     if (diff > 0)
-        add_line(wxString::Format(_L("Print time %s → %s (saves %s)."), seconds_text(original_time_seconds), seconds_text(optimized_time_seconds), seconds_text(diff)));
+        add_line(wxString::Format(_L("Print time %s → %s, %s faster."), seconds_text(original_time_seconds), seconds_text(optimized_time_seconds), seconds_text(diff)));
     else if (diff == 0)
         add_line(wxString::Format(_L("Print time unchanged (%s)."), seconds_text(original_time_seconds)));
     else
-        add_line(wxString::Format(_L("Print time %s → %s (slowed down to protect hot layers)."), seconds_text(original_time_seconds), seconds_text(optimized_time_seconds)));
-    auto grade = [](const std::string& g) { return g == "HIGH" ? _L("High") : g == "MEDIUM" ? _L("Medium") : _L("Low"); };
-    add_line(wxString::Format(_L("Thermal balance improvement: %s"), grade(balance_grade)));
-    add_line(wxString::Format(_L("Thermal consistency improvement: %s"), grade(consistency_grade)));
+        add_line(wxString::Format(_L("Print time %s → %s, %s slower to let hot layers cool."), seconds_text(original_time_seconds), seconds_text(optimized_time_seconds), seconds_text(-diff)));
     if (summary.layers > 0) {
-        add_line(wxString::Format(_L("Mean thermal index %.2f → %.2f, spread %.2f → %.2f. Layers slowed down: %d of %d, sped up: %d."),
-                                  summary.mean_before, summary.mean_after, summary.std_before, summary.std_after, summary.slowed, summary.layers, summary.sped_up));
-        if (summary.paused > 0)
-            add_line(wxString::Format(_L("Cooling pauses: %d layers, %s in total, the head parked beside the part."), summary.paused, seconds_text(int(std::lround(summary.pause_total)))));
-        if (std::abs(summary.mean_before) < 0.2f && summary.std_before < 0.3f)
-            add_line(_L("The plate was already close to the comfort window, so there was little to rebalance; a low improvement grade is expected."));
-        else if (summary.slowed == summary.layers - 1 && summary.sped_up == 0)
-            add_line(_L("Every layer read hot, so all speeds were reduced as far as the limits and the preset minimum speed allow. If the plate was already slowed down by the filament's layer-time setting, little or nothing changes."));
+        wxString what = wxString::Format(_L("%d of %d layers slowed down, %d sped up."), summary.slowed, summary.layers, summary.sped_up);
+        if (summary.paused > 0) what += " " + wxString::Format(_L("Cooling pauses on %d layers, %s in total."), summary.paused, seconds_text(int(std::lround(summary.pause_total))));
+        add_line(what);
     }
-    add_line(_L("The preview now shows the optimized G-code with its thermal index colour scheme."));
-    finish(false);
+    if (hot > 2) {
+        add_line(wxString::Format(_L("Still too hot: %d%% of the print time, %s. Speed alone cannot cool these layers."), hot, z_range(summary.hot_bottom_z, summary.hot_top_z)));
+        add_line(summary.paused > 0 ? _L("Raise the pause limit in Settings, or add a cooling tower so each layer gets more time.") :
+                                      _L("Turn on cooling pauses in Settings, or add a cooling tower so each layer gets more time."));
+    }
+    if (cold > 2) add_line(wxString::Format(_L("Still too cold: %d%% of the print time. A warmer chamber or less part cooling helps there."), cold));
+    add_scale();
+    add_line(_L("The preview shows the adjusted G-code. Slice again to go back to the original speeds."));
+
+    auto grade = [](const std::string& g) { return g == "HIGH" ? _L("high") : g == "MEDIUM" ? _L("medium") : _L("low"); };
+    std::vector<wxString> details;
+    details.push_back(wxString::Format(_L("Mean thermal index %.2f → %.2f, spread %.2f → %.2f (−1 cold, 0 comfortable, +1 hot)."), summary.mean_before, summary.mean_after,
+                                       summary.std_before, summary.std_after));
+    details.push_back(wxString::Format(_L("Improvement: balance %s, consistency %s."), grade(balance_grade), grade(consistency_grade)));
+    if (summary.layers > 0 && std::abs(summary.mean_before) < 0.2f && summary.std_before < 0.3f)
+        details.push_back(_L("The plate was already close to comfortable, so there was little to change."));
+    else if (summary.layers > 0 && summary.slowed == summary.layers - 1 && summary.sped_up == 0)
+        details.push_back(_L("Every layer read hot, so all speeds went down as far as the limits and the filament's minimum speed allow. A plate the filament profile already slowed down changes little."));
+    add_details(details);
+    finish(false, hot > 2 && summary.hot_top_z > 0.f ? summary.hot_top_z : 0.f);
 }
 
-void ThermalOptimizationResultDialog::init(const wxString& headline)
+void ThermalOptimizationResultDialog::init(const wxString& headline, const wxColour& tone)
 {
     SetBackgroundColour(*wxWHITE);
     m_sizer = new wxBoxSizer(wxVERTICAL);
-    m_sizer->AddSpacer(FromDIP(12));
-    add_line(headline, true);
+    m_sizer->AddSpacer(FromDIP(16));
+    auto* row = new wxBoxSizer(wxHORIZONTAL);
+    auto* dot = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(12), FromDIP(12)));
+    dot->SetBackgroundColour(tone);
+    row->Add(dot, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    row->Add(new Label(this, Label::Head_16, headline), 0, wxALIGN_CENTER_VERTICAL);
+    m_sizer->Add(row, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
 }
 
 void ThermalOptimizationResultDialog::add_line(const wxString& text, bool bold)
@@ -403,7 +484,60 @@ void ThermalOptimizationResultDialog::add_line(const wxString& text, bool bold)
     auto* label = new Label(this, bold ? Label::Head_14 : Label::Body_13, text, LB_AUTO_WRAP);
     label->SetMinSize(wxSize(FromDIP(460), -1));
     label->Wrap(FromDIP(460));
-    m_sizer->Add(label, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(bold ? 8 : 6));
+    m_sizer->Add(label, 0, wxLEFT | wxRIGHT | wxBOTTOM | (bold ? wxTOP : 0), FromDIP(bold ? 8 : 6));
+}
+
+void ThermalOptimizationResultDialog::add_scale()
+{
+    // Same direction as the preview legend: blue cold, green comfortable, red hot.
+    const int w = FromDIP(300), h = FromDIP(10);
+    wxImage   img(w, h);
+    for (int x = 0; x < w; ++x) {
+        const float t = float(x) / float(w - 1) * 2.f - 1.f, a = std::abs(t);
+        const wxColour c0(40, 190, 70), c1 = t < 0.f ? wxColour(30, 80, 200) : wxColour(210, 45, 35);
+        const unsigned char r = (unsigned char)(c0.Red() + (c1.Red() - c0.Red()) * a), g = (unsigned char)(c0.Green() + (c1.Green() - c0.Green()) * a),
+                            b = (unsigned char)(c0.Blue() + (c1.Blue() - c0.Blue()) * a);
+        for (int y = 0; y < h; ++y) img.SetRGB(x, y, r, g, b);
+    }
+    auto* col = new wxBoxSizer(wxVERTICAL);
+    col->Add(new wxStaticBitmap(this, wxID_ANY, wxBitmap(img)), 0);
+    auto* labels = new wxBoxSizer(wxHORIZONTAL);
+    labels->SetMinSize(wxSize(w, -1));
+    labels->Add(new Label(this, Label::Body_12, _L("too cold")), 0);
+    labels->AddStretchSpacer();
+    labels->Add(new Label(this, Label::Body_12, _L("comfortable")), 0);
+    labels->AddStretchSpacer();
+    labels->Add(new Label(this, Label::Body_12, _L("too hot")), 0);
+    col->Add(labels, 0, wxEXPAND | wxTOP, FromDIP(2));
+    m_sizer->Add(col, 0, wxLEFT | wxRIGHT | wxTOP | wxBOTTOM, FromDIP(8));
+}
+
+void ThermalOptimizationResultDialog::add_details(const std::vector<wxString>& lines)
+{
+    if (lines.empty()) return;
+    auto* toggle = new Label(this, Label::Body_13, wxString::FromUTF8("▸ ") + _L("Details"));
+    toggle->SetForegroundColour(TONE_GOOD);
+    toggle->SetCursor(wxCursor(wxCURSOR_HAND));
+    m_sizer->Add(toggle, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(8));
+    auto* panel  = new wxPanel(this);
+    auto* psizer = new wxBoxSizer(wxVERTICAL);
+    panel->SetBackgroundColour(*wxWHITE);
+    for (const wxString& t : lines) {
+        auto* l = new Label(panel, Label::Body_12, t, LB_AUTO_WRAP);
+        l->SetMinSize(wxSize(FromDIP(460), -1));
+        l->Wrap(FromDIP(460));
+        l->SetForegroundColour(wxColour(110, 110, 110));
+        psizer->Add(l, 0, wxTOP, FromDIP(4));
+    }
+    panel->SetSizer(psizer);
+    panel->Hide();
+    m_sizer->Add(panel, 0, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(8));
+    toggle->Bind(wxEVT_LEFT_DOWN, [this, toggle, panel](wxMouseEvent&) {
+        panel->Show(!panel->IsShown());
+        toggle->SetLabel(wxString::FromUTF8(panel->IsShown() ? "▾ " : "▸ ") + _L("Details"));
+        Layout();
+        Fit();
+    });
 }
 
 void ThermalOptimizationResultDialog::finish(bool offer_optimize, float cooling_tower_height)
@@ -412,7 +546,7 @@ void ThermalOptimizationResultDialog::finish(bool offer_optimize, float cooling_
     if (cooling_tower_height > 0.f) {
         const float h     = std::ceil(cooling_tower_height + 2.f);
         auto*       tower = make_button(this, wxString::Format(_L("Add cooling tower (%.0f mm)"), h), false);
-        tower->SetToolTip(_L("Adds a thin hollow cylinder beside the part, as tall as the hot region. While it prints, every small layer of the part gets that much more time to cool, with no pause and no mark. Slice again afterwards."));
+        tower->SetToolTip(_L("Adds a thin hollow cylinder beside the part, as tall as the hot region. While it prints, every small layer of the part gets that much more time to cool, without pausing on the part. Slice again afterwards."));
         tower->Bind(wxEVT_BUTTON, [this, h](wxCommandEvent&) {
             EndModal(wxID_CANCEL);
             wxGetApp().plater()->CallAfter([h]() { wxGetApp().plater()->add_thermal_cooling_tower(h); });
@@ -421,7 +555,7 @@ void ThermalOptimizationResultDialog::finish(bool offer_optimize, float cooling_
     }
     buttons->AddStretchSpacer();
     if (offer_optimize) {
-        auto* optimize = make_button(this, _L("Optimize now"), true);
+        auto* optimize = make_button(this, _L("Adjust layer speeds…"), true);
         optimize->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             EndModal(wxID_OK);
             wxGetApp().plater()->CallAfter([]() {

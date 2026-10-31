@@ -89,6 +89,8 @@ struct ThermalOptimizeSummary
     int   layers{0}, slowed{0}, sped_up{0};
     int   paused{0};            // layers followed by a cooling pause
     float pause_total{0.f};     // s
+    float hot_after{0.f}, cold_after{0.f};          // share of extrusion time still hot / cold after optimizing
+    float hot_bottom_z{-1.f}, hot_top_z{-1.f};      // z range still rated hot after optimizing, -1 when none
 };
 
 struct ThermalGCodeText

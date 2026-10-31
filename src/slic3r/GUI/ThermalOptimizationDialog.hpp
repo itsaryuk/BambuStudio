@@ -33,6 +33,8 @@ private:
     ThermalMaterials       m_params;
     ThermalOptimizeOptions m_options;
     int                    m_action{0};
+    wxRadioButton*         m_check{nullptr};
+    wxRadioButton*         m_adjust{nullptr};
     wxSpinCtrl*            m_chamber{nullptr};
     wxSpinCtrl*            m_speed_up{nullptr};
     wxSpinCtrl*            m_slow_down{nullptr};
@@ -90,8 +92,10 @@ public:
     void on_dpi_changed(const wxRect& suggested_rect) override { Fit(); Refresh(); }
 
 private:
-    void     init(const wxString& headline);
+    void     init(const wxString& headline, const wxColour& tone);
     void     add_line(const wxString& text, bool bold = false);
+    void     add_scale();                                                    // cold / comfortable / hot colour bar, as in the preview
+    void     add_details(const std::vector<wxString>& lines);                // folded "Details" section
     void     finish(bool offer_optimize, float cooling_tower_height = 0.f);
     wxSizer* m_sizer{nullptr};
 };
