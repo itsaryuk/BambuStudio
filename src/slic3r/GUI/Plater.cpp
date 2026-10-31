@@ -7292,6 +7292,11 @@ public:
     void on_helio_input_dlg(SimpleEvent &);
     void on_helio_process(const PartPlate* expected_plate);
     void on_thermal_optimization(const PartPlate* expected_plate);
+    // Material models from the presets; g_result (may be null before slicing) tells which filaments the plate uses.
+    ThermalMaterials thermal_materials(const GCodeProcessorResult* g_result);
+    // Fit the cooling constant from a printed tower that broke down at `height`; returns the message to show.
+    wxString thermal_calibrate(float height);
+    bool     thermal_plate_ready();
     void on_action_publish(wxCommandEvent &evt);
     bool confirm_send_only_gcode();
     void on_action_print_plate(SimpleEvent&);
@@ -15810,23 +15815,8 @@ void Plater::priv::on_helio_process(const PartPlate* expected_plate)
 }
 
 // Built-in Thermal Optimization: local layer-temperature model, no account or network.
-void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
+ThermalMaterials Plater::priv::thermal_materials(const GCodeProcessorResult* g_result)
 {
-    auto launch_allowed = [this, expected_plate]() {
-        const PartPlate* current_plate = partplate_list.get_curr_plate();
-        return current_plate != nullptr && current_plate == expected_plate && current_plate->is_slice_result_valid() &&
-               current_plate->can_slice() && !q->only_gcode_mode() && !q->using_exported_file() &&
-               !sidebar->has_broken_mixed_filament(current_plate) && !q->is_background_process_slicing();
-    };
-    if (!launch_allowed()) return;
-    if (helio_background_process.is_running()) {
-        MessageDialog dlg(nullptr, _L("A thermal analysis or optimization is already running."), _L("Thermal Optimization"), wxOK | wxICON_INFORMATION);
-        dlg.ShowModal();
-        return;
-    }
-    GCodeProcessorResult* g_result = background_process.get_current_gcode_result();
-    if (g_result == nullptr) return;
-
     // One material model per filament slot (moves carry the slot in extruder_id); bed and chamber are shared.
     const DynamicPrintConfig& cfg   = wxGetApp().preset_bundle->full_config();
     const auto*               types = cfg.option<ConfigOptionStrings>("filament_type");
@@ -15859,8 +15849,10 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
     // Chamber, mirroring what the slicer emits: the filament's chamber temperature counts only on printers with chamber control.
     float chamber_temp = 0.f, decay_height = ThermalModelParams().bed_air_decay_height;
     bool  exhaust      = false;
-    for (const auto& fu : g_result->used_filaments) {
-        const size_t f = size_t(std::max(0, fu.filament_id));
+    std::vector<size_t> used;
+    if (g_result != nullptr) for (const auto& fu : g_result->used_filaments) used.push_back(size_t(std::max(0, fu.filament_id)));
+    if (used.empty()) for (size_t f = 0; f < n_fil; ++f) used.push_back(f);
+    for (const size_t f : used) {
         if (printer_bool("support_chamber_temp_control")) chamber_temp = std::max(chamber_temp, float(int_at("chamber_temperatures", f, 0)));
         exhaust |= printer_bool("support_air_filtration") && bool_at("activate_air_filtration", f) && int_at("during_print_exhaust_fan_speed", f, 0) > 0;
     }
@@ -15874,7 +15866,7 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
     ThermalMaterials params;
     for (size_t f = 0; f < n_fil; ++f) {
         const std::string type          = types != nullptr && f < types->values.size() ? types->values[f] : std::string();
-        const float       vitrification = f < g_result->filament_vitrification_temperature.size() ? float(g_result->filament_vitrification_temperature[f]) : float(int_at("temperature_vitrification", f, -1));
+        const float       vitrification = g_result != nullptr && f < g_result->filament_vitrification_temperature.size() ? float(g_result->filament_vitrification_temperature[f]) : float(int_at("temperature_vitrification", f, -1));
         ThermalModelParams p = ThermalModelParams::for_material(type, vitrification);
         p.bed_temp           = bed_temp;
         p.chamber_temp       = chamber_temp;
@@ -15885,58 +15877,80 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
         p.calibrate_cooling_from_preset(float(int_at("slow_down_layer_time", f, 0)), float(int_at("fan_max_speed", f, 100)),
                                         float(int_at("nozzle_temperature", f, 0)), std::max(chamber_temp, p.room_temp));
         // A printed tower may have calibrated the cooling constant for this filament type; it beats the preset-derived one.
-        const std::string calibrated = wxGetApp().app_config->get("thermal_cooling_" + boost::to_upper_copy(type));
-        if (!calibrated.empty()) p.cooling_time_const = std::stof(calibrated);
+        const std::string calibrated = wxGetApp().app_config->get("thermal", "cooling_" + boost::to_upper_copy(type));
+        if (!calibrated.empty()) { p.cooling_time_const = std::stof(calibrated); p.calibrated = true; }
         params.push_back(p);
     }
-    ThermalOptimizeOptions options; // max_volumetric stays unset: the per-filament profile limit applies unless the user overrides it
+    return params;
+}
 
-    ThermalOptimizationInputDialog dlg(nullptr, params, options, g_helio_pre_select_optimization);
-    g_helio_pre_select_optimization = false;
-    if (dlg.ShowModal() != wxID_OK || !launch_allowed()) return;
+bool Plater::priv::thermal_plate_ready()
+{
+    const PartPlate* plate = partplate_list.get_curr_plate();
+    return plate != nullptr && plate->is_slice_result_valid() && plate->can_slice() && !q->only_gcode_mode() && !q->using_exported_file() &&
+           !sidebar->has_broken_mixed_filament(plate) && !q->is_background_process_slicing() && background_process.get_current_gcode_result() != nullptr;
+}
 
-    if (dlg.get_action() == 2) { // calibrate from the printed tower: fit the hot edge of the comfort window
-        ThermalGCodeText text;
-        if (!ThermalGCodeText::load(g_result->filename, text)) return;
-        const std::vector<int> move_layers = ThermalQuality::layers_of_moves(*g_result, text.line_layers);
-        const ThermalMaterials mats        = dlg.get_params();
-        const ThermalReport    report      = ThermalQuality::simulate(*g_result, move_layers, mats);
-        const float            height      = dlg.get_calibration_height();
-        int                    layer = -1, slot = 0;
-        for (size_t i = 1; i < g_result->moves.size(); ++i)
-            if (g_result->moves[i].type == EMoveType::Extrude && move_layers[i] >= 0 && g_result->moves[i].position.z() >= height) { layer = move_layers[i]; slot = g_result->moves[i].extruder_id; break; }
-        if (layer < 0 || layer >= int(report.layer_substrate_temp.size())) {
-            MessageDialog(nullptr, _L("No layer at that height in the sliced plate."), _L("Thermal Optimization"), wxOK | wxICON_WARNING).ShowModal();
-            return;
-        }
-        // A layer-time slow-down hides the heat build-up the tower is meant to show; the slice is only valid with the current presets.
-        if (const int slow_down = int_at("slow_down_layer_time", size_t(std::max(slot, 0)), 0); slow_down > 0) {
-            MessageDialog(nullptr, wxString::Format(_L("This plate was sliced with the filament's slow-down layer time at %d s, so the slicer throttled the small layers and the tower did not run as hot as it should. Set \"Slow down layer time\" (Filament → Cooling) to 0, slice and print the tower again, then calibrate."), slow_down),
-                          _L("Thermal Optimization"), wxOK | wxICON_WARNING).ShowModal();
-            return;
-        }
-        const ThermalModelParams& mat   = slot < int(mats.size()) ? mats[slot] : mats.front();
-        const float               t_sub = report.layer_substrate_temp[layer];
-        const std::string         type  = boost::to_upper_copy(types != nullptr && slot < int(types->values.size()) ? types->values[slot] : std::string());
-        if (t_sub <= mat.ideal_substrate_temp + 2.f) {
-            MessageDialog(nullptr, wxString::Format(_L("The model puts the substrate at %.0f °C on that layer, at or below the comfort midpoint of %.0f °C, so the window cannot be fitted there. Check the height, or lower the vitrification temperature in the filament preset."), t_sub, mat.ideal_substrate_temp),
-                          _L("Thermal Optimization"), wxOK | wxICON_WARNING).ShowModal();
-            return;
-        }
-        // Fit the cooling constant so that layer sits at the hot edge (+0.8) of the class comfort window: layers below,
-        // with their longer layer times, then come out cooler, which is what the printed tower shows.
-        const float target = mat.ideal_substrate_temp + 0.8f * mat.window_half_width;
-        bool        bounded = false;
-        const float tau     = ThermalQuality::fit_cooling_constant(*g_result, move_layers, mats, slot, layer, target, &bounded);
-        wxGetApp().app_config->set("thermal_cooling_" + type, std::to_string(tau));
-        wxGetApp().app_config->erase("app", "thermal_half_width_" + type); // older calibrations scaled the window instead
-        wxGetApp().app_config->save();
-        wxString msg = wxString::Format(_L("Calibrated %s: cooling constant %.1f s in still air (was %.1f s), comfort window %.0f ± %.0f °C. Layer %d at %.1f mm is now rated at the hot edge of the window; the layers below come out cooler. Running the calibration again overwrites this."),
-                                        wxString::FromUTF8(mat.material), tau, mat.cooling_time_const, mat.ideal_substrate_temp, mat.window_half_width, layer + 1, height);
-        if (bounded) msg += _L("\n\nThe fit hit its limit: the model cannot reach that layer temperature with any cooling constant, so check the measured height and the bed and chamber temperatures.");
-        MessageDialog(nullptr, msg, _L("Thermal Optimization"), wxOK | wxICON_INFORMATION).ShowModal();
+wxString Plater::priv::thermal_calibrate(float height)
+{
+    if (!thermal_plate_ready()) return _L("Slice the tower project first.");
+    GCodeProcessorResult* g_result = background_process.get_current_gcode_result();
+    ThermalGCodeText      text;
+    if (!ThermalGCodeText::load(g_result->filename, text)) return _L("Could not read the sliced G-code.");
+    const std::vector<int> move_layers = ThermalQuality::layers_of_moves(*g_result, text.line_layers);
+    const ThermalMaterials mats        = thermal_materials(g_result);
+    int                    layer = -1, slot = 0;
+    for (size_t i = 1; i < g_result->moves.size(); ++i)
+        if (g_result->moves[i].type == EMoveType::Extrude && move_layers[i] >= 0 && g_result->moves[i].position.z() >= height) { layer = move_layers[i]; slot = g_result->moves[i].extruder_id; break; }
+    if (layer < 0) return _L("No layer at that height in the sliced plate.");
+    const DynamicPrintConfig& cfg = wxGetApp().preset_bundle->full_config();
+    const auto* types = cfg.option<ConfigOptionStrings>("filament_type");
+    const auto* sd    = cfg.option<ConfigOptionInts>("slow_down_layer_time");
+    if (const int slow_down = sd != nullptr && !sd->values.empty() ? sd->get_at(size_t(std::max(slot, 0))) : 0; slow_down > 0)
+        return wxString::Format(_L("This plate was sliced with the filament's slow-down layer time at %d s, so the slicer throttled the small layers and the tower did not run as hot as it should. Set \"Slow down layer time\" (Filament → Cooling) to 0, slice and print the tower again, then calibrate."), slow_down);
+    const ThermalModelParams& mat     = slot < int(mats.size()) ? mats[slot] : mats.front();
+    const std::string         type    = boost::to_upper_copy(types != nullptr && slot < int(types->values.size()) ? types->values[slot] : std::string("UNKNOWN"));
+    const float               target  = mat.ideal_substrate_temp + 0.8f * mat.window_half_width; // that layer sits at the hot edge
+    const float               class_tau = ThermalModelParams::for_material(type, -1.f).cooling_time_const;
+    bool                      bounded = false;
+    ThermalMaterials          fresh   = mats;
+    fresh[std::min<size_t>(size_t(std::max(slot, 0)), fresh.size() - 1)].cooling_time_const = class_tau; // fit from the class value, not the last calibration
+    const float    tau  = ThermalQuality::fit_cooling_constant(*g_result, move_layers, fresh, slot, layer, target, &bounded);
+    const wxString note = wxString::Format("%s, %.1f mm", wxDateTime::Now().FormatISODate(), height);
+    wxGetApp().app_config->set("thermal", "cooling_" + type, std::to_string(tau));
+    wxGetApp().app_config->set("thermal", "cooling_" + type + "_note", into_u8(note));
+    wxGetApp().app_config->erase("app", "thermal_half_width_" + type); // older builds scaled the window instead
+    wxGetApp().app_config->erase("app", "thermal_cooling_" + type);
+    wxGetApp().app_config->save();
+    BOOST_LOG_TRIVIAL(info) << "Thermal calibration: " << type << " layer " << layer << " height " << height << " target " << target << " C -> cooling constant " << tau << " s, bounded " << bounded;
+    wxString msg = wxString::Format(_L("Calibrated %s: cooling constant %.1f s in still air (material default %.1f s), comfort window %.0f ± %.0f °C. Layer %d at %.1f mm now sits at the hot edge of the window; the layers below come out cooler. Stored for this filament type and used from now on."),
+                                    wxString::FromUTF8(mat.material), tau, class_tau, mat.ideal_substrate_temp, mat.window_half_width, layer + 1, height);
+    if (bounded) msg += _L(" The fit hit its limit, so check the measured height and the bed and chamber temperatures.");
+    return msg;
+}
+
+void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
+{
+    auto launch_allowed = [this, expected_plate]() {
+        const PartPlate* current_plate = partplate_list.get_curr_plate();
+        return current_plate != nullptr && current_plate == expected_plate && current_plate->is_slice_result_valid() &&
+               current_plate->can_slice() && !q->only_gcode_mode() && !q->using_exported_file() &&
+               !sidebar->has_broken_mixed_filament(current_plate) && !q->is_background_process_slicing();
+    };
+    if (helio_background_process.is_running()) {
+        MessageDialog dlg(nullptr, _L("A thermal analysis or optimization is already running."), _L("Thermal Optimization"), wxOK | wxICON_INFORMATION);
+        dlg.ShowModal();
         return;
     }
+    const bool            ready    = launch_allowed();
+    GCodeProcessorResult* g_result = ready ? background_process.get_current_gcode_result() : nullptr;
+    ThermalMaterials      params   = thermal_materials(g_result);
+    ThermalOptimizeOptions options; // max_volumetric stays unset: the per-filament profile limit applies unless the user overrides it
+
+    ThermalOptimizationInputDialog dlg(nullptr, params, options, g_helio_pre_select_optimization, ready && g_result != nullptr);
+    g_helio_pre_select_optimization = false;
+    if (dlg.ShowModal() != wxID_OK || !launch_allowed() || g_result == nullptr) return;
+
 
     if (!helio_background_process.init_local(g_result, preview, dlg.get_params(), dlg.get_options())) {
         MessageDialog msg(nullptr, _L("The previous thermal task is still stopping; try again shortly."), _L("Thermal Optimization"), wxOK | wxICON_WARNING);
@@ -15953,16 +15967,15 @@ void Plater::priv::on_thermal_optimization(const PartPlate* expected_plate)
 void Plater::priv::on_helio_input_dlg(SimpleEvent &a)
 {
     const PartPlate* current_plate = partplate_list.get_curr_plate();
-    if (current_plate == nullptr || !current_plate->is_slice_result_valid() ||
-        !current_plate->can_slice() || q->only_gcode_mode() || q->using_exported_file() ||
-        sidebar->has_broken_mixed_filament(current_plate) || q->is_background_process_slicing())
-        return;
-
     // The built-in Thermal Optimization is the default; the cloud service is used only when it was explicitly enabled.
     if (wxGetApp().app_config->get("helio_enable") != "true") {
         on_thermal_optimization(current_plate);
         return;
     }
+    if (current_plate == nullptr || !current_plate->is_slice_result_valid() ||
+        !current_plate->can_slice() || q->only_gcode_mode() || q->using_exported_file() ||
+        sidebar->has_broken_mixed_filament(current_plate) || q->is_background_process_slicing())
+        return;
 
     std::string helio_api_key = Slic3r::HelioQuery::get_helio_pat();
 
@@ -21493,7 +21506,36 @@ void Plater::add_thermal_calibration_tower()
     wxGetApp().get_tab(Preset::TYPE_FILAMENT)->update_dirty();
     wxGetApp().get_tab(Preset::TYPE_FILAMENT)->reload_config();
 
-    ThermalCalibrationGuideDialog(nullptr, sd_was).ShowModal();
+    (void) sd_was;
+    CallAfter([this]() { open_thermal_calibration(); });
+}
+
+void Plater::open_thermal_calibration()
+{
+    ThermalCalibrationDialog::State st;
+    const DynamicPrintConfig& cfg   = wxGetApp().preset_bundle->full_config();
+    const auto*               types = cfg.option<ConfigOptionStrings>("filament_type");
+    std::vector<std::string>  seen;
+    if (types != nullptr)
+        for (const std::string& t : types->values) {
+            if (std::find(seen.begin(), seen.end(), t) != seen.end()) continue;
+            seen.push_back(t);
+            if (!st.material.empty()) st.material += ", ";
+            st.material += wxString::FromUTF8(t);
+            const std::string key = "cooling_" + boost::to_upper_copy(t);
+            if (wxGetApp().app_config->has("thermal", key)) {
+                if (!st.stored.empty()) st.stored += "\n";
+                st.stored += wxString::Format(_L("%s: cooling constant %s s, calibrated %s."), wxString::FromUTF8(t), wxString::FromUTF8(wxGetApp().app_config->get("thermal", key)).substr(0, 4),
+                                              wxString::FromUTF8(wxGetApp().app_config->get("thermal", key + "_note")));
+            }
+        }
+    if (st.material.empty()) st.material = _L("the loaded filament");
+    st.plate_ready = p->thermal_plate_ready();
+    for (const ModelObject* o : model().objects) st.plate_is_tower |= o->name == "Thermal calibration tower";
+    const auto* sd = wxGetApp().preset_bundle->filaments.get_edited_preset().config.option<ConfigOptionInts>("slow_down_layer_time");
+    st.slow_down_now = sd != nullptr && !sd->values.empty() ? sd->values.front() : -1;
+    ThermalCalibrationDialog dlg(nullptr, st, [this]() { CallAfter([this]() { add_thermal_calibration_tower(); }); }, [this](float h) { return p->thermal_calibrate(h); });
+    dlg.ShowModal();
 }
 
 void Plater::calib_temp(const Calib_Params &params)

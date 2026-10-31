@@ -392,6 +392,7 @@ public:
     void calib_flowrate(int pass);
     void calib_temp(const Calib_Params &params);
     void add_thermal_calibration_tower();
+    void open_thermal_calibration(); // the three-step tower calibration dialog
     void calib_max_vol_speed(const Calib_Params &params);
     void calib_retraction(const Calib_Params &params);
     void calib_VFA(const Calib_Params &params);

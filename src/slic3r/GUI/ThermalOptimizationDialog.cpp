@@ -47,55 +47,48 @@ wxString seconds_text(int s) { return wxString::FromUTF8(short_time(get_time_dhm
 // ---------------------------------------------------------------------------------------------------------------------
 
 ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent, const ThermalMaterials& params,
-                                                               const ThermalOptimizeOptions& options, bool preselect_optimize)
+                                                               const ThermalOptimizeOptions& options, bool preselect_optimize, bool plate_ready)
     : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, TITLE, wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
     , m_params(params)
     , m_options(options)
 {
     SetBackgroundColour(*wxWHITE);
     auto* sizer = new wxBoxSizer(wxVERTICAL);
-    const int pad = FromDIP(12);
+    const int pad = FromDIP(12), width = FromDIP(480);
+    auto text = [&](const wxString& t, const wxFont& font = Label::Body_13) {
+        auto* l = new Label(this, font, t, LB_AUTO_WRAP);
+        l->SetMinSize(wxSize(width, -1));
+        l->Wrap(width);
+        return l;
+    };
 
-    auto* intro = new Label(this, Label::Body_13,
-        _L("Simulates how warm each layer still is when the next one lands and rates every toolpath from cold (-1) to hot (+1). Runs on this computer."), LB_AUTO_WRAP);
-    intro->SetMinSize(wxSize(FromDIP(440), -1));
-    intro->Wrap(FromDIP(440));
-    sizer->Add(intro, 0, wxALL | wxEXPAND, pad);
+    sizer->Add(text(_L("Simulates how warm each layer still is when the next one lands and rates every toolpath from cold (-1) to hot (+1). Runs on this computer.")), 0, wxALL, pad);
 
-    m_analyze  = new wxRadioButton(this, wxID_ANY, _L("Analyze: rate layer temperatures, keep the G-code as sliced"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP);
-    m_optimize = new wxRadioButton(this, wxID_ANY, _L("Optimize: rescale layer speeds so every layer lands in the comfort window"));
-    (preselect_optimize ? m_optimize : m_analyze)->SetValue(true);
-    sizer->Add(m_analyze, 0, wxLEFT | wxRIGHT, pad);
-    sizer->Add(m_optimize, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
-    m_calibrate = new wxRadioButton(this, wxID_ANY, _L("Calibrate: the sliced plate is a printed calibration tower"));
-    sizer->Add(m_calibrate, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
-    auto* calib_row = new wxBoxSizer(wxHORIZONTAL);
-    calib_row->Add(new Label(this, Label::Body_13, _L("Height where corners rounded off or layers sagged (mm)")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
-    m_calib_height = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0., 300., 40., 0.5);
-    calib_row->Add(m_calib_height, 0, wxALIGN_CENTER_VERTICAL);
-    auto* tower = make_button(this, _L("Add calibration tower"), false);
-    tower->SetToolTip(_L("Also in the Calibration menu as \"Thermal tower\", which works before anything is sliced. Opens a new project with a 30 mm cone: layers get shorter towards the top, so the material eventually runs hot. Print it with this filament, note the height where corners round off or the surface sags, then slice it again, open this dialog and enter that height."));
-    tower->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-        EndModal(wxID_CANCEL);
-        wxGetApp().plater()->CallAfter([]() { wxGetApp().plater()->add_thermal_calibration_tower(); });
-    });
-    calib_row->Add(tower, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
-    auto* guide = make_button(this, _L("How to read it"), false);
-    guide->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { ThermalCalibrationGuideDialog(this).ShowModal(); });
-    calib_row->Add(guide, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(6));
-    sizer->Add(calib_row, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
-    sizer->AddSpacer(pad);
-    wxString materials;
-    for (size_t i = 0; i < params.size(); ++i) {
-        if (params[i].material.empty()) continue;
-        if (!materials.empty()) materials += ", ";
-        materials += wxString::Format("%s (%.0f ± %.0f °C)", wxString::FromUTF8(params[i].material), params[i].ideal_substrate_temp, params[i].window_half_width);
+    // What the model is working with, and whether a printed tower has tuned it.
+    bool     any_calibrated = false;
+    wxString mats;
+    for (const ThermalModelParams& m : params) {
+        if (m.material.empty()) continue;
+        if (!mats.empty()) mats += "\n";
+        mats += wxString::Format(m.calibrated ? _L("%s: comfort window %.0f ± %.0f °C, cooling constant %.1f s from your calibration tower.") :
+                                                _L("%s: comfort window %.0f ± %.0f °C, cooling constant %.1f s from material defaults (not calibrated)."),
+                                 wxString::FromUTF8(m.material), m.ideal_substrate_temp, m.window_half_width, m.cooling_time_const);
+        any_calibrated |= m.calibrated;
     }
-    auto* mats = new Label(this, Label::Body_12, wxString::Format(_L("Material model from the filament presets: %s. Chamber air is prefilled from the printer and filament presets (heated chamber, or the bed warming an enclosure)."), materials), LB_AUTO_WRAP);
-    mats->SetMinSize(wxSize(FromDIP(440), -1));
-    mats->Wrap(FromDIP(440));
-    sizer->Add(mats, 0, wxLEFT | wxRIGHT, pad);
+    sizer->Add(text(_L("Material model"), Label::Head_13), 0, wxLEFT | wxRIGHT, pad);
+    sizer->Add(text(mats), 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
+    auto* calib_row = new wxBoxSizer(wxHORIZONTAL);
+    calib_row->Add(text(any_calibrated ? _L("Recalibrate after changing filament, nozzle or cooling setup.") :
+                                         _L("A 15-minute tower print makes the model match this filament. Without it the ratings are estimates."), Label::Body_12), 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    auto* calibrate = make_button(this, any_calibrated ? _L("Recalibrate…") : _L("Calibrate…"), !any_calibrated);
+    calibrate->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        EndModal(wxID_CANCEL);
+        wxGetApp().plater()->CallAfter([]() { wxGetApp().plater()->open_thermal_calibration(); });
+    });
+    calib_row->Add(calibrate, 0, wxALIGN_CENTER_VERTICAL);
+    sizer->Add(calib_row, 0, wxLEFT | wxRIGHT | wxTOP | wxEXPAND, FromDIP(6));
 
+    sizer->Add(text(_L("Environment and limits"), Label::Head_13), 0, wxLEFT | wxRIGHT | wxTOP, pad);
     auto* grid = new wxFlexGridSizer(2, FromDIP(6), FromDIP(10));
     grid->AddGrowableCol(1);
     auto row = [&](const wxString& name, wxWindow* ctrl) {
@@ -104,30 +97,38 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     };
     m_chamber = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0, 120,
                                int(std::max(0.f, params.empty() ? 0.f : params.front().chamber_temp)));
+    m_chamber->SetToolTip(_L("Prefilled from the printer and filament presets: a heated chamber, or the bed warming an enclosure."));
     row(_L("Chamber air temperature (°C, 0 = open frame)"), m_chamber);
     m_speed_up = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0, 100,
                                 int(std::lround((options.max_speed_factor - 1.f) * 100.f)));
-    row(_L("Maximum speed-up on cold layers (%)"), m_speed_up);
+    row(_L("Optimize: maximum speed-up on cold layers (%)"), m_speed_up);
     m_slow_down = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0, 90,
                                  int(std::lround((1.f - options.min_speed_factor) * 100.f)));
-    row(_L("Maximum slow-down on hot layers (%)"), m_slow_down);
+    row(_L("Optimize: maximum slow-down on hot layers (%)"), m_slow_down);
     m_max_volumetric = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0., 100.,
                                             std::max(0.f, options.max_volumetric), 0.5);
-    row(_L("Maximum volumetric speed (mm³/s, 0 = no limit)"), m_max_volumetric);
-    sizer->Add(grid, 0, wxALL | wxEXPAND, pad);
-
-    m_keep_outer = new wxCheckBox(this, wxID_ANY, _L("Keep outer wall speeds unchanged (preserve surface finish)"));
+    row(_L("Optimize: maximum volumetric speed (mm³/s, 0 = filament limit)"), m_max_volumetric);
+    sizer->Add(grid, 0, wxLEFT | wxRIGHT | wxTOP | wxEXPAND, FromDIP(6));
+    m_keep_outer = new wxCheckBox(this, wxID_ANY, _L("Optimize: keep outer wall speeds unchanged (preserve surface finish)"));
     m_keep_outer->SetValue(options.keep_outer_walls);
-    sizer->Add(m_keep_outer, 0, wxLEFT | wxRIGHT, pad);
+    sizer->Add(m_keep_outer, 0, wxLEFT | wxRIGHT | wxTOP, pad);
 
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer();
-    auto* cancel = make_button(this, _L("Cancel"), false);
-    auto* ok     = make_button(this, _L("Start"), true);
+    auto* cancel   = make_button(this, _L("Cancel"), false);
+    auto* analyze  = make_button(this, _L("Analyze"), !preselect_optimize);
+    auto* optimize = make_button(this, _L("Optimize"), preselect_optimize);
+    analyze->SetToolTip(plate_ready ? _L("Rate layer temperatures and show them in the preview. The G-code stays as sliced.") : _L("Slice the plate first."));
+    optimize->SetToolTip(plate_ready ? _L("Rescale layer speeds within the limits above so every layer lands in the comfort window, then load the result.") : _L("Slice the plate first."));
+    analyze->Enable(plate_ready);
+    optimize->Enable(plate_ready);
+    if (!plate_ready) sizer->Add(text(_L("Slice the plate to analyze or optimize it. Calibration is available any time."), Label::Body_12), 0, wxLEFT | wxRIGHT | wxTOP, pad);
     cancel->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
-    ok->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
+    analyze->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { m_action = 0; EndModal(wxID_OK); });
+    optimize->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { m_action = 1; EndModal(wxID_OK); });
     buttons->Add(cancel, 0, wxRIGHT, FromDIP(8));
-    buttons->Add(ok, 0);
+    buttons->Add(analyze, 0, wxRIGHT, FromDIP(8));
+    buttons->Add(optimize, 0);
     sizer->Add(buttons, 0, wxALL | wxEXPAND, pad);
 
     SetSizer(sizer);
@@ -136,8 +137,6 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     CenterOnParent();
     wxGetApp().UpdateDlgDarkUI(this);
 }
-
-float ThermalOptimizationInputDialog::get_calibration_height() const { return float(m_calib_height->GetValue()); }
 
 ThermalMaterials ThermalOptimizationInputDialog::get_params() const
 {
@@ -159,45 +158,73 @@ ThermalOptimizeOptions ThermalOptimizationInputDialog::get_options() const
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-ThermalCalibrationGuideDialog::ThermalCalibrationGuideDialog(wxWindow* parent, int slow_down_was)
-    : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, _L("Thermal calibration tower"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
+ThermalCalibrationDialog::ThermalCalibrationDialog(wxWindow* parent, const State& state, std::function<void()> create_tower, std::function<wxString(float)> calibrate)
+    : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, _L("Thermal calibration"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
     SetBackgroundColour(*wxWHITE);
     auto* outer = new wxBoxSizer(wxVERTICAL);
     auto* body  = new wxBoxSizer(wxHORIZONTAL);
+    const int width = FromDIP(460);
 
     wxImage photo(from_u8(resources_dir() + "/images/thermal_calibration_tower.jpg"), wxBITMAP_TYPE_JPEG);
     if (photo.IsOk()) {
-        const int h = FromDIP(380);
+        const int h = FromDIP(420);
         photo.Rescale(photo.GetWidth() * h / photo.GetHeight(), h, wxIMAGE_QUALITY_HIGH);
-        body->Add(new wxStaticBitmap(this, wxID_ANY, wxBitmap(photo)), 0, wxRIGHT, FromDIP(16));
+        body->Add(new wxStaticBitmap(this, wxID_ANY, wxBitmap(photo)), 0, wxRIGHT | wxALIGN_TOP, FromDIP(16));
     }
 
-    auto* text = new wxBoxSizer(wxVERTICAL);
-    auto  para = [&](const wxString& t, bool bold = false) {
-        auto* l = new Label(this, bold ? Label::Head_13 : Label::Body_13, t, LB_AUTO_WRAP);
-        l->SetMinSize(wxSize(FromDIP(430), -1));
-        l->Wrap(FromDIP(430));
-        text->Add(l, 0, wxBOTTOM, FromDIP(bold ? 4 : 10));
+    auto* col  = new wxBoxSizer(wxVERTICAL);
+    auto  para = [&](const wxString& t, const wxFont& font = Label::Body_13, int below = 8) {
+        auto* l = new Label(this, font, t, LB_AUTO_WRAP);
+        l->SetMinSize(wxSize(width, -1));
+        l->Wrap(width);
+        col->Add(l, 0, wxBOTTOM, FromDIP(below));
+        return l;
     };
-    para(_L("1. Print it"), true);
-    para(_L("Slice this cone with the filament you want to calibrate and print it. Layer time shrinks towards the tip, so at some height the material stops cooling enough before the next layer lands."));
-    if (slow_down_was > 0)
-        para(wxString::Format(_L("Slow down layer time (Filament → Cooling) was %d s and has been set to 0 on the loaded filament so the slicer does not throttle the small layers. If you switch to another filament preset before slicing, set it to 0 there too. Discard the preset change after printing the tower."), slow_down_was), true);
-    else if (slow_down_was == 0)
-        para(_L("Slow down layer time (Filament → Cooling) is 0 on the loaded filament, as the tower needs. Keep it at 0 if you switch filament presets before slicing."), true);
-    else
-        para(_L("Slow down layer time (Filament → Cooling) must be 0 when slicing the tower, or the slicer throttles the small layers and hides the heat build-up. Calibrate refuses a tower sliced with it on."), true);
-    para(_L("2. Read it"), true);
-    para(_L("The lower part has crisp, even layer lines. Higher up the lines turn wavy and ridged, the surface loses its gloss or gets rough and pebbled, and near the tip the layers slump into a blob or the cone bends. That band is where each layer was laid on material that was still soft. The blob at the tip is the same effect at its extreme and is not the number to use."));
-    para(_L("3. Measure it"), true);
-    para(_L("With a caliper, measure from the bottom of the cone (not the brim) to the lowest height where the ridges or roughness go all the way around, as marked by the line in the photo. If the change is gradual, take the height where it is clearly visible, not the first isolated bump."));
-    para(_L("4. Enter it"), true);
-    para(_L("With the sliced tower still open, press the Thermal Optimization button, choose Calibrate, enter that height and press Start. The comfort window is then stored for this filament type and used automatically. Running the calibration again overwrites it."));
-    body->Add(text, 1, wxEXPAND);
+    para(wxString::Format(_L("Calibrate the thermal model for %s"), state.material), Label::Head_14, 4);
+    para(state.stored.empty() ? _L("Not calibrated yet: the material defaults are in use.") : state.stored, Label::Body_12, 12);
 
+    para(_L("1. Print the tower"), Label::Head_13, 4);
+    para(_L("A 30 mm cone, about 15 minutes. Layer time shrinks towards the tip, so at some height the material stops cooling enough before the next layer lands."));
+    if (state.slow_down_now > 0)
+        para(wxString::Format(_L("Slow down layer time (Filament → Cooling) is %d s on the loaded filament. Creating the tower sets it to 0; keep it at 0 when you slice, or the slicer throttles the small layers and hides the effect."), state.slow_down_now), Label::Body_12);
+    else if (state.slow_down_now == 0)
+        para(_L("Slow down layer time (Filament → Cooling) is 0 on the loaded filament, as the tower needs."), Label::Body_12);
+    auto* step1 = new wxBoxSizer(wxHORIZONTAL);
+    step1->Add(new Label(this, Label::Body_12, state.plate_is_tower && state.plate_ready ? _L("The tower project is open and sliced.") :
+                                               state.plate_is_tower ? _L("The tower project is open. Slice it, then print it.") :
+                                                                      _L("Create the tower project, slice it and print it.")), 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    auto* tower = make_button(this, _L("Create tower project"), !state.plate_is_tower);
+    tower->Bind(wxEVT_BUTTON, [this, create_tower](wxCommandEvent&) { EndModal(wxID_CANCEL); if (create_tower) create_tower(); });
+    step1->Add(tower, 0, wxALIGN_CENTER_VERTICAL);
+    col->Add(step1, 0, wxEXPAND | wxBOTTOM, FromDIP(12));
+
+    para(_L("2. Read the print"), Label::Head_13, 4);
+    para(_L("Low down the layer lines are crisp. Higher up they turn wavy and ridged, the surface loses its gloss, and the tip slumps into a blob. With a caliper, measure from the bottom of the cone (not the brim) to the lowest height where the ridges go all the way round, as the line in the photo shows. Ignore the blob at the tip."), Label::Body_13, 12);
+
+    para(_L("3. Enter the height"), Label::Head_13, 4);
+    para(_L("Open the sliced tower project (the one you printed from), enter the height and press Calibrate. The model is tuned so that layer sits at the hot edge of the comfort window, and the result is stored for this filament type."), Label::Body_13, 6);
+    auto* step3 = new wxBoxSizer(wxHORIZONTAL);
+    step3->Add(new Label(this, Label::Body_13, _L("Height where ridges start (mm)")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+    m_height = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(90), -1), wxSP_ARROW_KEYS, 0., 300., 40., 0.1);
+    step3->Add(m_height, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
+    auto* go = make_button(this, _L("Calibrate"), state.plate_ready);
+    go->Enable(state.plate_ready);
+    if (!state.plate_ready) go->SetToolTip(_L("Open and slice the tower project first."));
+    step3->Add(go, 0, wxALIGN_CENTER_VERTICAL);
+    col->Add(step3, 0, wxBOTTOM, FromDIP(8));
+    m_result = para(state.plate_ready && !state.plate_is_tower ? _L("Note: the open project does not look like the calibration tower; the result is only meaningful for the tower.") : wxString(), Label::Body_12, 0);
+    go->Bind(wxEVT_BUTTON, [this, calibrate](wxCommandEvent&) {
+        if (!calibrate) return;
+        m_result->SetLabel(calibrate(float(m_height->GetValue())));
+        m_result->Wrap(FromDIP(460));
+        Layout();
+        Fit();
+    });
+    body->Add(col, 1, wxEXPAND);
     outer->Add(body, 1, wxEXPAND | wxALL, FromDIP(20));
-    auto* close = make_button(this, _L("Close"), true);
+
+    auto* close = make_button(this, _L("Close"), false);
     close->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
     outer->Add(close, 0, wxALIGN_RIGHT | wxRIGHT | wxBOTTOM, FromDIP(20));
     SetSizerAndFit(outer);

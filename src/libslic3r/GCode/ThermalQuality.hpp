@@ -33,6 +33,7 @@ struct ThermalModelParams
     float max_volumetric{-1.f};        // filament profile limit for the optimizer (mm³/s), <= 0: none
     float min_speed{-1.f};             // filament profile slow-down floor (mm/s), <= 0: none
     bool  warp_prone{false};           // engineering materials: advice favours enclosure and layer time over the part fan
+    bool  calibrated{false};           // cooling_time_const came from a printed calibration tower
 
     // Defaults for a filament type (exact, then base type before '-', then without trailing digits: PA6-CF -> PA6 -> PA);
     // vitrification_temp <= 0 falls back to the class midpoint.

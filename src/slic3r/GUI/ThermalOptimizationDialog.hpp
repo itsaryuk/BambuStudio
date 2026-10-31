@@ -1,6 +1,7 @@
 #ifndef slic3r_ThermalOptimizationDialog_hpp_
 #define slic3r_ThermalOptimizationDialog_hpp_
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -10,6 +11,7 @@
 #include <wx/spinctrl.h>
 
 #include "GUI_Utils.hpp"
+#include "Widgets/Label.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/GCode/ThermalQuality.hpp"
 
@@ -19,10 +21,9 @@ namespace Slic3r { namespace GUI {
 class ThermalOptimizationInputDialog : public DPIDialog
 {
 public:
-    ThermalOptimizationInputDialog(wxWindow* parent, const ThermalMaterials& params, const ThermalOptimizeOptions& options, bool preselect_optimize);
+    ThermalOptimizationInputDialog(wxWindow* parent, const ThermalMaterials& params, const ThermalOptimizeOptions& options, bool preselect_optimize, bool plate_ready = true);
 
-    int                    get_action() const { return m_optimize->GetValue() ? 1 : m_calibrate->GetValue() ? 2 : 0; } // 0 analyze, 1 optimize, 2 calibrate
-    float                  get_calibration_height() const;
+    int                    get_action() const { return m_action; } // 0 analyze, 1 optimize
     ThermalMaterials       get_params() const;
     ThermalOptimizeOptions get_options() const;
 
@@ -31,10 +32,7 @@ public:
 private:
     ThermalMaterials       m_params;
     ThermalOptimizeOptions m_options;
-    wxRadioButton*         m_analyze{nullptr};
-    wxRadioButton*         m_optimize{nullptr};
-    wxRadioButton*         m_calibrate{nullptr};
-    wxSpinCtrlDouble*      m_calib_height{nullptr};
+    int                    m_action{0};
     wxSpinCtrl*            m_chamber{nullptr};
     wxSpinCtrl*            m_speed_up{nullptr};
     wxSpinCtrl*            m_slow_down{nullptr};
@@ -42,13 +40,24 @@ private:
     wxCheckBox*            m_keep_outer{nullptr};
 };
 
-// How to print, read and measure the calibration tower (photo plus steps).
-class ThermalCalibrationGuideDialog : public DPIDialog
+// Three steps from a printed tower to a calibrated model: create and print the tower, read it, enter the height.
+class ThermalCalibrationDialog : public DPIDialog
 {
 public:
-    // slow_down_was: the filament preset's slow-down layer time before the tower set it to 0 (-1: not changed now).
-    explicit ThermalCalibrationGuideDialog(wxWindow* parent, int slow_down_was = -1);
+    struct State
+    {
+        wxString material;              // filament type(s) loaded
+        wxString stored;                // current calibration, empty when none
+        bool     plate_ready{false};    // a sliced, valid plate is open
+        bool     plate_is_tower{false}; // the open project contains the calibration tower
+        int      slow_down_now{-1};     // loaded filament's slow-down layer time, -1 unknown
+    };
+    ThermalCalibrationDialog(wxWindow* parent, const State& state, std::function<void()> create_tower, std::function<wxString(float)> calibrate);
     void on_dpi_changed(const wxRect& suggested_rect) override { Fit(); Refresh(); }
+
+private:
+    wxSpinCtrlDouble* m_height{nullptr};
+    Label*            m_result{nullptr};
 };
 
 class ThermalOptimizationResultDialog : public DPIDialog

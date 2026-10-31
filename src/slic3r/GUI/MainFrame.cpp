@@ -2697,11 +2697,13 @@ void MainFrame::update_helio_button_state()
         return;
 
     const PartPlate* current_plate = m_plater != nullptr ? m_plater->get_partplate_list().get_curr_plate() : nullptr;
-    const bool helio_enabled = m_plater != nullptr && !m_plater->only_gcode_mode() &&
+    const bool local_engine  = wxGetApp().app_config->get("helio_enable") != "true";
+    // The built-in engine opens its dialog any time (calibration needs no slice); the cloud service needs a sliced plate.
+    const bool helio_enabled = m_plater != nullptr && (local_engine || (!m_plater->only_gcode_mode() &&
                                !m_plater->using_exported_file() && current_plate != nullptr &&
                                current_plate->is_slice_result_valid() && current_plate->can_slice() &&
                                !m_plater->sidebar().has_broken_mixed_filament() &&
-                               !m_plater->is_background_process_slicing();
+                               !m_plater->is_background_process_slicing()));
     const std::string topbar_icon = wxGetApp().app_config->get("helio_enable") == "true" ? "helio_icon_topbar" : "thermal_icon_topbar";
     expand_program_holder->updateExpandButtonBitmap(expand_helio_id, helio_enabled ? topbar_icon : topbar_icon + "_disable");
     expand_program_holder->EnableExpandButton(expand_helio_id, helio_enabled);
@@ -3668,9 +3670,6 @@ void MainFrame::init_menubar_as_editor()
                 m_temp_calib_dlg->ShowModal();
             }, "", nullptr,
             [this]() {return m_plater->is_view3D_shown();; }, this);
-        append_menu_item(m_topbar->GetCalibMenu(), wxID_ANY, _L("Thermal tower"), _L("Print a cone that runs hot towards the tip, then calibrate the Thermal Optimization comfort window for this filament"),
-            [this](wxCommandEvent&) { m_plater->add_thermal_calibration_tower(); }, "", nullptr,
-            [this]() { return m_plater->is_view3D_shown(); }, this);
         auto flowrate_menu = new wxMenu();
         append_menu_item(
             flowrate_menu, wxID_ANY, _L("Coarse"), _L("Flow rate test - Coarse"),
@@ -3752,9 +3751,6 @@ void MainFrame::init_menubar_as_editor()
         // SoftFever calibrations
     m_calib_menu = new wxMenu();
 
-    append_menu_item(m_calib_menu, wxID_ANY, _L("Thermal tower"), _L("Print a cone that runs hot towards the tip, then calibrate the Thermal Optimization comfort window for this filament"),
-        [this](wxCommandEvent&) { m_plater->add_thermal_calibration_tower(); }, "", nullptr,
-        [this]() { return m_plater->is_view3D_shown(); }, this);
     // Temp
     append_menu_item(
         m_calib_menu, wxID_ANY, _L("Temperature"), _L("Temperature"),
