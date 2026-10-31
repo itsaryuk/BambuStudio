@@ -98,12 +98,36 @@ TEST_CASE("Rules suggest settings for the intent and geometry", "[SettingsAdviso
     SECTION("functional: more walls and infill, plate-wide; nothing that already matches") {
         const auto s = suggest({ cube }, Intent::Functional, cfg);
         REQUIRE(find(s, "wall_loops"));
-        CHECK(find(s, "wall_loops")->suggested == "4");
-        CHECK(find(s, "sparse_infill_density")->suggested == "30%");
-        CHECK_FALSE(find(s, "layer_height")); // 0.5 x 0.4 nozzle = 0.2, already set
+        CHECK(find(s, "wall_loops")->suggested == "4");               // 8 cm3: small part
+        CHECK(find(s, "sparse_infill_density")->suggested == "40%");
+        REQUIRE(find(s, "layer_height"));                               // boxy: no slopes to show steps
+        CHECK(find(s, "layer_height")->suggested == "0.24");
         CHECK_FALSE(find(s, "enable_support"));
         for (const Suggestion &x : s)
             CHECK(x.current != x.suggested);
+    }
+    SECTION("the plate's geometry changes the advice") {
+        const ObjectAnalysis big = named(analyze_mesh(box(100, 100, 30)), "big", 0); // 300 cm3
+        auto s = suggest({ big }, Intent::Functional, cfg);
+        CHECK(find(s, "sparse_infill_density")->suggested == "20%");
+        CHECK(find(s, "wall_loops")->suggested == "3");
+
+        s = suggest({ big }, Intent::Visual, cfg);
+        CHECK(find(s, "sparse_infill_pattern")->suggested == "lightning");
+        CHECK_FALSE(find(s, "wall_loops")); // 2 walls, already set
+
+        // A cone is all sloped surface: visual goes to the finest layers.
+        const ObjectAnalysis cone = named(analyze_mesh(its_make_cone(20., 30.)), "cone", 0);
+        s = suggest({ cone }, Intent::Visual, cfg);
+        REQUIRE(find(s, "layer_height"));
+        CHECK(find(s, "layer_height")->suggested == "0.08");
+        // ...and it wins over a boxy neighbour; the boxy part alone would get 0.16.
+        CHECK(find(suggest({ big, cone }, Intent::Visual, cfg), "layer_height")->suggested == "0.08");
+        CHECK(find(suggest({ big }, Intent::Visual, cfg), "layer_height")->suggested == "0.16");
+
+        // A slender functional pillar gets an extra wall.
+        s = suggest({ named(analyze_mesh(box(5, 5, 60)), "pillar", 0) }, Intent::Functional, cfg);
+        CHECK(find(s, "wall_loops")->suggested == "5");
     }
     SECTION("overhang turns on supports") {
         indexed_triangle_set t = box(10, 10, 12, { 15, 15, 0 });

@@ -23,6 +23,8 @@ static constexpr double FLAT_COS          = 0.99;
 // Downward faces flatter than 45 deg from horizontal print as overhangs, flatter than 30 deg need support.
 static const double     OVERHANG_COS      = std::cos(M_PI / 4.);
 static const double     STEEP_COS         = std::cos(M_PI / 6.);
+// Upward faces flatter than 60 deg from vertical show the layer steps.
+static const double     SHALLOW_COS       = std::cos(M_PI / 3.);
 // Ray-cast at most this many faces for the thin-wall estimate.
 static constexpr size_t MAX_WALL_SAMPLES  = 20000;
 // Ignore hits closer than this (coplanar / degenerate faces).
@@ -39,6 +41,18 @@ static constexpr double LARGE_TOP_AREA    = 1000.;    // mm^2
 static constexpr double IRONING_TOP_AREA  = 2000.;    // mm^2
 // Bases larger than this warp at the corners with shrinking materials (ABS/ASA/PA/PC).
 static constexpr double LARGE_FOOTPRINT   = 2500.;    // mm^2 (~50x50 mm)
+// Share of the surface that is shallow-sloped: above HIGH the layer steps dominate the look,
+// below LOW the part is mostly vertical walls and flats, so thicker layers lose nothing.
+static constexpr double STAIRCASE_HIGH    = 0.15;
+static constexpr double STAIRCASE_LOW     = 0.03;
+// Objects lower than this print quickly; finer layers cost little.
+static constexpr double SHORT_OBJECT      = 15.;      // mm
+// Part size classes by volume.
+static constexpr double SMALL_VOLUME      = 20000.;   // mm^3 (20 cm3): infill and walls are cheap
+static constexpr double LARGE_VOLUME      = 200000.;  // mm^3 (200 cm3): infill dominates print time
+static constexpr double LIGHTNING_VOLUME  = 100000.;  // mm^3: visual parts this big only need infill under the tops
+// Height / narrowest footprint side above this: slender, flexes and snaps at layer lines.
+static constexpr double SLENDER_RATIO     = 3.;
 
 ObjectAnalysis analyze_mesh(const indexed_triangle_set &its, const std::function<bool()> &canceled)
 {
@@ -50,8 +64,9 @@ ObjectAnalysis analyze_mesh(const indexed_triangle_set &its, const std::function
     for (const stl_vertex &v : its.vertices)
         bb.merge(v.cast<double>());
     const double min_z = bb.min.z();
-    out.height = bb.size().z();
-    out.volume = std::abs(its_volume(its));
+    out.height        = bb.size().z();
+    out.footprint_min = std::min(bb.size().x(), bb.size().y());
+    out.volume        = std::abs(its_volume(its));
 
     std::vector<Vec3d>  centroids(its.indices.size());
     std::vector<Vec3d>  normals(its.indices.size());
@@ -66,6 +81,7 @@ ObjectAnalysis analyze_mesh(const indexed_triangle_set &its, const std::function
             continue;
         const Vec3d n = cross.normalized();
         normals[i] = n;
+        out.surface_area += area;
         if (n.z() < -FLAT_COS && centroids[i].z() < min_z + BED_CONTACT_Z_TOL) {
             out.bed_contact_area += area;
         } else if (n.z() < 0. && centroids[i].z() > min_z + BED_CONTACT_Z_TOL) {
@@ -73,6 +89,8 @@ ObjectAnalysis analyze_mesh(const indexed_triangle_set &its, const std::function
             if (-n.z() > STEEP_COS)    out.steep_overhang_area += area;
         } else if (n.z() > FLAT_COS) {
             out.top_flat_area += area;
+        } else if (n.z() > SHALLOW_COS) {
+            out.shallow_top_area += area;
         }
     }
 
@@ -174,30 +192,62 @@ std::map<std::string, Desired> desired_for_object(const ObjectAnalysis &obj, Int
     std::map<std::string, Desired> d;
     const char *intent_name = intent == Intent::Functional ? "functional" : intent == Intent::Visual ? "visual" : "fast draft";
 
-    int walls = intent == Intent::Functional ? 4 : intent == Intent::Visual ? 3 : 2;
+    const int  cm3     = int(std::round(obj.volume / 1000.));
+    const bool small   = obj.volume < SMALL_VOLUME;
+    const bool large   = obj.volume > LARGE_VOLUME;
+    const bool slender = obj.footprint_min > 0. && obj.height / obj.footprint_min > SLENDER_RATIO;
+
+    int walls = intent == Intent::Functional ? 3 : intent == Intent::Visual ? 3 : 2;
     std::string wall_reason = (boost::format("%1% print: %2% walls") % intent_name % walls).str();
+    if (intent == Intent::Functional && small) {
+        walls = 4;
+        wall_reason = (boost::format("small functional part (%1% cm3): walls give most of the strength and cost little") % cm3).str();
+    } else if (intent == Intent::Visual && large) {
+        walls = 2;
+        wall_reason = (boost::format("large visual part (%1% cm3): 2 walls give a clean surface, more only add time") % cm3).str();
+    }
+    if (slender && intent != Intent::Visual) {
+        ++walls;
+        wall_reason += (boost::format("; +1 wall: %1% mm tall on a %2% mm wide base bends and snaps at layer lines") %
+                        int(obj.height) % fmt_mm(obj.footprint_min)).str();
+    }
     // A wall thinner than the requested shells is printed solid anyway; say so instead of adding walls.
     const double line = 1.125 * nozzle;
     if (std::isfinite(obj.min_wall) && obj.min_wall < 2. * walls * line)
         wall_reason += (boost::format(" (thinnest wall ~%1% mm is solid either way)") % fmt_mm(obj.min_wall)).str();
     d["wall_loops"] = { std::to_string(walls), wall_reason };
 
+    const double top_area = std::max(obj.top_flat_area, obj.sliced_max_top_area);
     switch (intent) {
     case Intent::Functional:
-        d["sparse_infill_density"] = { "30%", "functional print: 30% infill for strength" };
+        if (small)
+            d["sparse_infill_density"] = { "40%", (boost::format("small functional part (%1% cm3): dense infill adds stiffness for little time") % cm3).str() };
+        else if (large)
+            d["sparse_infill_density"] = { "20%", (boost::format("large functional part (%1% cm3): walls carry the load, 20%% keeps print time sane") % cm3).str() };
+        else
+            d["sparse_infill_density"] = { "30%", (boost::format("functional part (%1% cm3): 30%% infill for strength") % cm3).str() };
         d["sparse_infill_pattern"] = { "gyroid", "gyroid is strong in every direction" };
         break;
     case Intent::Visual:
         d["sparse_infill_density"] = { "15%", "visual print: 15% is enough to support the top surfaces" };
-        d["sparse_infill_pattern"] = { "gyroid", "gyroid doesn't show through thin walls as lines" };
+        if (obj.volume > LIGHTNING_VOLUME)
+            d["sparse_infill_pattern"] = { "lightning", (boost::format("large visual part (%1% cm3): lightning only fills under the top surfaces, much faster") % cm3).str() };
+        else
+            d["sparse_infill_pattern"] = { "gyroid", "gyroid doesn't show through thin walls as lines" };
         break;
     case Intent::FastDraft:
-        d["sparse_infill_density"] = { "10%", "fast draft: minimal infill" };
-        d["sparse_infill_pattern"] = { "grid", "grid prints fast" };
+        if (!small) {
+            d["sparse_infill_density"] = { "10%", "fast draft: minimal infill" };
+            d["sparse_infill_pattern"] = { "lightning", (boost::format("draft of a %1% cm3 part: lightning infill is the fastest") % cm3).str() };
+        } else {
+            d["sparse_infill_density"] = top_area > LARGE_TOP_AREA ?
+                Desired{ "15%", (boost::format("large flat top (%1% mm2) sags on less than 15%% infill") % int(top_area)).str() } :
+                Desired{ "10%", "fast draft: minimal infill" };
+            d["sparse_infill_pattern"] = { "grid", "grid prints fast" };
+        }
         break;
     }
 
-    const double top_area = std::max(obj.top_flat_area, obj.sliced_max_top_area);
     double top_mm = intent == Intent::FastDraft ? 0.6 : 1.0;
     std::string top_reason = (boost::format("%1% mm of top shell for a %2% print") % fmt_mm(top_mm) % intent_name).str();
     if (intent != Intent::FastDraft && top_area > LARGE_TOP_AREA) {
@@ -230,16 +280,44 @@ std::vector<Suggestion> suggest(const std::vector<ObjectAnalysis> &objects, Inte
     // Layer height first: shell layer counts depend on it.
     double lh = full.opt_float("layer_height");
     {
-        const double base = intent == Intent::Functional ? 0.5 : intent == Intent::Visual ? 0.3 : 0.7; // x nozzle
-        double target = std::round(base * nozzle * 100.) / 100.;
+        // Steps of 0.2..0.7 x nozzle (0.08..0.28 mm on a 0.4 nozzle). The intent picks the start, the object
+        // that shows layer steps the most moves it: sloped/curved tops go finer, boxy parts coarser.
+        static constexpr double steps[] = { 0.2, 0.3, 0.4, 0.5, 0.6, 0.7 };
+        const int   base_step = intent == Intent::Functional ? 3 : intent == Intent::Visual ? 1 : 5;
+        int         step      = base_step;
+        const std::string default_why = (boost::format("%1% layers for a %2% nozzle") %
+            (intent == Intent::Functional ? "balanced" : intent == Intent::Visual ? "fine" : "thick") % fmt_mm(nozzle)).str();
+        std::string why = default_why;
+        if (intent != Intent::FastDraft) {
+            // The finest step any object wants wins, so coarser only happens when every object asks for it.
+            step = base_step + 2;
+            for (const ObjectAnalysis &obj : objects) {
+                const double sloped = obj.surface_area > 0. ? obj.shallow_top_area / obj.surface_area : 0.;
+                int s = base_step;
+                std::string r;
+                if (sloped > STAIRCASE_HIGH) {
+                    s = base_step - 1;
+                    r = (boost::format("'%1%': %2%%% of the surface is gently sloped, thinner layers hide the steps") % obj.name % int(sloped * 100.)).str();
+                } else if (obj.height < SHORT_OBJECT) {
+                    s = base_step - 1;
+                    r = (boost::format("'%1%' is only %2% mm tall, finer layers cost little time") % obj.name % fmt_mm(obj.height)).str();
+                } else if (sloped < STAIRCASE_LOW) {
+                    s = base_step + 1;
+                    r = (boost::format("'%1%' is mostly vertical walls and flat tops, thicker layers look the same and print faster") % obj.name).str();
+                }
+                if (s < step) {
+                    step = s;
+                    why  = r.empty() ? default_why : r;
+                }
+            }
+        }
+        double target = std::round(steps[std::max(step, 0)] * nozzle * 100.) / 100.;
         const auto *mn = full.option<ConfigOptionFloats>("min_layer_height");
         const auto *mx = full.option<ConfigOptionFloats>("max_layer_height");
         if (mn && !mn->values.empty()) target = std::max(target, mn->values.front());
         if (mx && !mx->values.empty() && mx->values.front() > 0.) target = std::min(target, mx->values.front());
         if (std::abs(target - lh) > 1e-6) {
-            plate("layer_height", fmt_mm(target),
-                  (boost::format("%1% layers for a %2% nozzle") %
-                   (intent == Intent::Functional ? "balanced" : intent == Intent::Visual ? "fine" : "thick") % fmt_mm(nozzle)).str());
+            plate("layer_height", fmt_mm(target), why);
             lh = target;
         }
     }

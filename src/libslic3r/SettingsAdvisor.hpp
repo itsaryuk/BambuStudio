@@ -28,6 +28,9 @@ struct ObjectAnalysis
 
     double volume              = 0.;  // mm^3
     double height              = 0.;  // mm
+    double footprint_min       = 0.;  // mm, smaller side of the XY bounding box
+    double surface_area        = 0.;  // mm^2
+    double shallow_top_area    = 0.;  // mm^2, upward faces 8..60 deg off horizontal (show layer steps)
     double bed_contact_area    = 0.;  // mm^2, downward faces touching the bed
     double top_flat_area       = 0.;  // mm^2, upward faces within ~8 deg of horizontal
     double overhang_area       = 0.;  // mm^2, downward faces flatter than 45 deg off the bed
