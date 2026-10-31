@@ -608,11 +608,10 @@ void MaterialSyncItem::render(wxDC &dc)
         SetToolTip(_L("Upper half area:  Original\nLower half area: The filament from original project will be used when unmapped.\nAnd you can click it to modify"));
     } else {
         m_match = true;
-        if (m_dropdown_allow_painted) {
-            SetToolTip(_L("Upper half area:  Original\nLower half area:  Filament in AMS\nAnd you can click it to modify"));
-        } else {
-            SetToolTip(_L("Upper half area:  Original\nLower half area:  Filament in AMS\nAnd you cannot click it to modify"));
-        }
+        wxString tip = m_dropdown_allow_painted ? _L("Upper half area:  Original\nLower half area:  Filament in AMS\nAnd you can click it to modify") :
+                                                  _L("Upper half area:  Original\nLower half area:  Filament in AMS\nAnd you cannot click it to modify");
+        if (!m_flow_text.empty()) tip += "\n" + m_flow_text;
+        SetToolTip(tip);
     }
     dc.SetFont(::Label::Body_12);
     if (dc.GetTextExtent(m_material_name).x > GetSize().x - 10) {

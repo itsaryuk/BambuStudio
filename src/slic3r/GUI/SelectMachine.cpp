@@ -680,7 +680,7 @@ SelectMachineDialog::SelectMachineDialog(Plater *plater)
 
     auto option_flow_dynamics_cali =
         new PrintOption(m_options_other, _L("Flow Dynamics Calibration"),
-                        _L("This process determines the dynamic flow values to improve overall print quality.\n*Automatic mode: Skip if the filament was calibrated recently."),
+                        _L("Auto: the printer reuses its own recent calibration for this filament and nozzle, or calibrates before printing. Profiles you selected per slot are not used.\nOn: calibrates before every print.\nOff: uses the flow dynamics profile selected for each slot (hover a filament to see it), or the printer default."),
                         ops_auto, "flow_cali");
     option_flow_dynamics_cali->Bind(EVT_SWITCH_PRINT_OPTION, &SelectMachineDialog::on_flow_pa_caliation_option_changed, this);
 
@@ -1193,6 +1193,8 @@ void SelectMachineDialog::finish_mode()
 }
 
 
+static wxString _flow_profile_text(const MachineObject* obj, const FilamentInfo& f); // defined with the other pre-print checks below
+
 void SelectMachineDialog::sync_ams_mapping_result(const std::vector<FilamentInfo> &result)
 {
     if (result.empty()) {
@@ -1202,9 +1204,11 @@ void SelectMachineDialog::sync_ams_mapping_result(const std::vector<FilamentInfo
             wxColour ams_col = wxColour(0xCE, 0xCE, 0xCE);
             it->second->item->set_ams_info(ams_col, ams_id);
             it->second->item->set_nozzle_info(get_mapped_nozzle_str(it->first));
+            it->second->item->set_flow_info(wxEmptyString);
         }
         return;
     }
+    const MachineObject* flow_obj = get_current_machine();
 
     auto total_ext_count = std::optional<int>();
     if (auto obj_ = get_current_machine()) {
@@ -1245,6 +1249,7 @@ void SelectMachineDialog::sync_ams_mapping_result(const std::vector<FilamentInfo
                 }
                 m->set_ams_info(ams_col, ams_id,f->ctype, cols);
                 m->set_nozzle_info(get_mapped_nozzle_str(id));
+                m->set_flow_info(_flow_profile_text(flow_obj, *f));
                 break;
             }
             iter++;
@@ -2607,9 +2612,9 @@ void SelectMachineDialog::update_option_opts(MachineObject *obj)
     if (obj->is_support_pa_calibration) {
         if (obj->GetConfig()->SupportCalibrationPA_FlowAuto() && can_support_pa_auto_cali())
         {
-            m_checkbox_list["flow_cali"]->update_options(ops_auto, _L("This process determines the dynamic flow values to improve overall print quality.\n*Automatic mode: Skip if the filament was calibrated recently."));
+            m_checkbox_list["flow_cali"]->update_options(ops_auto, _L("Auto: the printer reuses its own recent calibration for this filament and nozzle, or calibrates before printing. Profiles you selected per slot are not used.\nOn: calibrates before every print.\nOff: uses the flow dynamics profile selected for each slot (hover a filament to see it), or the printer default."));
         } else {
-            m_checkbox_list["flow_cali"]->update_options(ops_no_auto, _L("This process determines the dynamic flow values to improve overall print quality."));
+            m_checkbox_list["flow_cali"]->update_options(ops_no_auto, _L("On: calibrates before every print.\nOff: uses the flow dynamics profile selected for each slot (hover a filament to see it), or the printer default."));
         }
     }
     m_checkbox_list["flow_cali"]->Show(obj->is_support_pa_calibration);
@@ -3100,8 +3105,15 @@ void SelectMachineDialog::update_option_dynamic_state(MachineObject *obj)
         } else {
             m_options_line_panel->Hide();
         }
+    } else if (m_checkbox_list["flow_cali"]->IsShown()) {
+        m_checkbox_list["flow_cali"]->update_tooltip(_L("Auto: the printer reuses its own recent calibration for this filament and nozzle, or calibrates before printing. Profiles you selected per slot are not used.\nOn: calibrates before every print.\nOff: uses the flow dynamics profile selected for each slot (hover a filament to see it), or the printer default."));
+        const std::string mode = m_checkbox_list["flow_cali"]->getValue();
+        m_options_line_label->SetLabel(mode == "auto" ? _L("Auto: the printer reuses its own recent calibration for this filament and nozzle, or calibrates before printing. Profiles you selected per slot are not used.") :
+                                       mode == "on"   ? _L("On: calibrates before every print.") :
+                                                        _L("Off: uses the flow dynamics profile selected for each slot (hover a filament to see it), or the printer default."));
+        m_options_line_label->Wrap(FromDIP(630));
+        m_options_line_panel->Show(!options_line_ignore);
     } else {
-        m_checkbox_list["flow_cali"]->update_tooltip(_L("This process determines the dynamic flow values to improve overall print quality.\n*Automatic mode: Skip if the filament was calibrated recently."));
         m_options_line_panel->Hide();
     }
 
@@ -4013,6 +4025,20 @@ void SelectMachineDialog::update_filament_change_count()
     Fit();
 }
 
+// The flow dynamics (pressure advance) profile the printer holds for a mapped slot. Stored on the printer, per filament
+// and nozzle; the slicer's filament preset plays no part on Bambu printers.
+static wxString _flow_profile_text(const MachineObject* obj, const FilamentInfo& f)
+{
+    if (obj == nullptr || f.tray_id < 0) return wxEmptyString;
+    const auto tray = obj->get_tray(f.ams_id, std::to_string(f.tray_id));
+    if (!tray.has_value()) return wxEmptyString;
+    if (tray->cali_idx == -1) return _L("Flow dynamics: no profile selected for this slot, the printer default is used.");
+    if (obj->GetCalib() != nullptr && obj->GetCalib()->IsPAHistoryReady())
+        if (const PACalibResult* r = obj->GetCalib()->GetPaHistoryFilter().find_by_cali_idx(tray->cali_idx); r != nullptr)
+            return wxString::Format(_L("Flow dynamics profile: %s (K %.3f). Used when Flow Dynamics Calibration is Off."), wxString::FromUTF8(r->name), r->k_value);
+    return wxString::Format(_L("Flow dynamics profile: K %.3f. Used when Flow Dynamics Calibration is Off."), tray->k);
+}
+
 static wxString _check_kval_not_default(const MachineObject* obj, const std::vector<FilamentInfo> &mapping_result)
 {
     if (!obj) { return wxEmptyString;}
@@ -4303,11 +4329,11 @@ void SelectMachineDialog::update_show_status(MachineObject* obj_)
     check_timelapse_storage_warning(obj_);
 
     /*STUDIO-10970 check the k value and flow cali option*/
-    if (m_checkbox_list["flow_cali"]->IsShown() && m_checkbox_list["flow_cali"]->getValue() == "auto") {
+    if (m_checkbox_list["flow_cali"]->IsShown() && m_checkbox_list["flow_cali"]->getValue() != "off") {
         const auto &not_default_ams_names = _check_kval_not_default(obj_, m_ams_mapping_result);
         if (!not_default_ams_names.empty()) {
-            std::vector<wxString> params{not_default_ams_names};
-            show_status(PrintDialogStatus::PrintStatusWarningKvalueNotUsed);
+            std::vector<wxString> params{wxString::Format(_L("Slot %s has a flow dynamics profile selected, which Auto and On ignore. Set Flow Dynamics Calibration to Off to print with it."), not_default_ams_names)};
+            show_status(PrintDialogStatus::PrintStatusWarningKvalueNotUsed, params);
            // return;
         }
     }

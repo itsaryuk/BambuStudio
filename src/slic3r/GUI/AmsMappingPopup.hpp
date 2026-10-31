@@ -111,6 +111,7 @@ public:
     virtual void reset_valid_info();
 
     void set_nozzle_info(const wxString& mapped_nozzle_str);
+    void set_flow_info(const wxString& txt) { m_flow_text = txt; Refresh(); } // flow dynamics profile of the mapped slot, shown in the tooltip
 
     void disable();
     void enable();
@@ -134,6 +135,7 @@ public:
     std::vector<wxColour> m_material_cols;
     wxString    m_material_name;
     wxString    m_mapped_nozzle_str;
+    wxString    m_flow_text;
 
     //info
     wxColour m_ams_coloul;
