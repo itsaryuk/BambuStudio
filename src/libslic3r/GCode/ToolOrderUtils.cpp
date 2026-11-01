@@ -1008,6 +1008,94 @@ namespace Slic3r
 
 
 
+    // Exact order of one layer from `prev` (the filament loaded before it, if any) to every possible last filament:
+    // Held-Karp keeping all ends. Ties on flush volume prefer fewer changes (a 0 flush still costs a change).
+    struct LayerPath { unsigned int last; float cost; int changes; std::vector<unsigned int> seq; };
+    static std::vector<LayerPath> layer_paths_to_all_ends(const FlushMatrix& m, const std::vector<unsigned int>& set, std::optional<unsigned int> prev)
+    {
+        const size_t n = set.size();
+        std::vector<LayerPath> out;
+        if (n == 0) return out;
+        if (n > 10) { // ponytail: 2^n blows up; keep the single best order for big layers, as before
+            float c = 0.f;
+            std::vector<unsigned int> seq = get_extruders_order(m, set, {}, prev, false, &c);
+            int ch = 0; std::optional<unsigned int> p = prev;
+            for (unsigned int f : seq) { ch += p && *p != f; p = f; }
+            out.push_back({seq.back(), c, ch, seq});
+            return out;
+        }
+        const unsigned int full = (1u << n) - 1;
+        const float inf = std::numeric_limits<float>::max();
+        std::vector<std::vector<std::pair<float, int>>> best(full + 1, std::vector<std::pair<float, int>>(n, {inf, 0}));
+        std::vector<std::vector<int>> from(full + 1, std::vector<int>(n, -1));
+        // Any filament may print first, even when the loaded one is in the layer: flush volumes need not obey the triangle
+        // inequality, so going back to the loaded filament later can be cheaper (the old look-ahead solver allowed it too).
+        for (size_t i = 0; i < n; ++i)
+            best[1u << i][i] = prev ? std::make_pair(m[*prev][set[i]], *prev != set[i] ? 1 : 0) : std::make_pair(0.f, 0);
+        for (unsigned int s = 1; s <= full; ++s)
+            for (size_t i = 0; i < n; ++i) {
+                if (!(s >> i & 1) || best[s][i].first == inf) continue;
+                for (size_t j = 0; j < n; ++j) {
+                    if (s >> j & 1) continue;
+                    const std::pair<float, int> c{best[s][i].first + m[set[i]][set[j]], best[s][i].second + 1};
+                    if (c < best[s | (1u << j)][j]) { best[s | (1u << j)][j] = c; from[s | (1u << j)][j] = int(i); }
+                }
+            }
+        for (size_t end = 0; end < n; ++end) {
+            if (best[full][end].first == inf) continue;
+            LayerPath p{set[end], best[full][end].first, best[full][end].second, {}};
+            for (int s = int(full), i = int(end); i >= 0;) { p.seq.push_back(set[i]); const int k = from[s][i]; s -= 1 << i; i = k; }
+            std::reverse(p.seq.begin(), p.seq.end());
+            out.push_back(std::move(p));
+        }
+        return out;
+    }
+
+    // Filament order for every layer of one nozzle, minimising the total flush over the whole stack (not layer by layer):
+    // a forward DP over layers whose state is the filament loaded after the layer. `fixed[layer]` holds a user's custom
+    // sequence, which is kept as is. Returns the total flush; `sequences` gets one entry per layer.
+    static float plan_layer_sequences(const FlushMatrix& m, const std::vector<std::vector<unsigned int>>& sets,
+                                      const std::vector<std::optional<std::vector<unsigned int>>>& fixed, std::optional<unsigned int> start,
+                                      std::vector<std::vector<unsigned int>>& sequences)
+    {
+        struct State { std::optional<unsigned int> last; float cost; int changes; int parent; std::vector<unsigned int> seq; };
+        std::vector<std::vector<State>> stages(sets.size() + 1);
+        stages[0].push_back({start, 0.f, 0, -1, {}});
+        std::map<std::pair<uint64_t, int>, std::vector<LayerPath>> cache; // (set mask, prev or -1) -> paths
+        for (size_t L = 0; L < sets.size(); ++L) {
+            std::map<int, State> next; // keyed by last filament, -1 = nothing loaded yet
+            auto offer = [&](State s) {
+                const int key = s.last ? int(*s.last) : -1;
+                auto it = next.find(key);
+                if (it == next.end() || std::make_pair(s.cost, s.changes) < std::make_pair(it->second.cost, it->second.changes)) next[key] = std::move(s);
+            };
+            for (int si = 0; si < int(stages[L].size()); ++si) {
+                const State& st = stages[L][si];
+                const std::vector<unsigned int>* seq = fixed[L] ? &*fixed[L] : nullptr;
+                if (seq != nullptr || sets[L].empty()) {
+                    State s{st.last, st.cost, st.changes, si, seq != nullptr ? *seq : std::vector<unsigned int>()};
+                    for (unsigned int f : s.seq) { if (s.last) { s.cost += m[*s.last][f]; s.changes += *s.last != f; } s.last = f; }
+                    offer(std::move(s));
+                    continue;
+                }
+                uint64_t mask = 0;
+                for (unsigned int f : sets[L]) mask |= uint64_t(1) << f;
+                const auto key = std::make_pair(mask, st.last ? int(*st.last) : -1);
+                auto it = cache.find(key);
+                if (it == cache.end()) it = cache.emplace(key, layer_paths_to_all_ends(m, sets[L], st.last)).first;
+                for (const LayerPath& p : it->second) offer({p.last, st.cost + p.cost, st.changes + p.changes, si, p.seq});
+            }
+            for (auto& kv : next) stages[L + 1].push_back(std::move(kv.second));
+        }
+        const auto& last = stages.back();
+        int at = int(std::min_element(last.begin(), last.end(), [](const State& a, const State& b) {
+                     return std::make_pair(a.cost, a.changes) < std::make_pair(b.cost, b.changes); }) - last.begin());
+        const float total = last[at].cost;
+        sequences.assign(sets.size(), {});
+        for (size_t L = sets.size(); L > 0; --L) { sequences[L - 1] = stages[L][at].seq; at = stages[L][at].parent; }
+        return total;
+    }
+
     // TODO:  add cusotm sequence
     static int reorder_filaments_for_minimum_flush_volume_base(const std::vector<unsigned int>& filament_lists,
         const std::vector<std::vector<unsigned int>>& layer_filaments,
@@ -1016,30 +1104,14 @@ namespace Slic3r
         std::vector<std::vector<unsigned int>>* filament_sequences,
         std::optional<unsigned int> initial_filament_id = std::nullopt)
     {
-        constexpr int max_n_with_forcast = 5;
-        using uint128_t = boost::multiprecision::uint128_t;
 
         if (filament_sequences) {
             filament_sequences->clear();
             filament_sequences->reserve(layer_filaments.size());
         }
-        auto          filament_list_to_hash_key = [](const std::vector<unsigned int>& curr_layer_filaments, const std::vector<unsigned int>& next_layer_filaments,
-            const std::optional<unsigned int>& prev_filament, bool use_forcast) -> uint128_t {
-                uint128_t hash_key = 0;
-                // 31-0 bit define current layer extruder,63-32 bit define next layer extruder,95~64 define prev extruder
-                if (prev_filament) hash_key |= (uint128_t(1) << (64 + *prev_filament));
-
-                if (use_forcast) {
-                    for (auto item : next_layer_filaments) { hash_key |= (uint128_t(1) << (32 + item)); }
-                }
-
-                for (auto item : curr_layer_filaments) { hash_key |= (uint128_t(1) << item); }
-                return hash_key;
-            };
 
         int cost = 0;
         std::map<size_t, std::vector<unsigned int>> custom_layer_sequence_map;
-        std::unordered_map<uint128_t, std::pair<float, std::vector<unsigned int>>> caches;
         std::unordered_set<unsigned int> filament_sets(filament_lists.begin(), filament_lists.end());
         std::optional<unsigned int>      curr_filament_id;
         // 如果传入了有效的初始材料ID，则使用它作为初始状态
@@ -1064,55 +1136,17 @@ namespace Slic3r
             }
         }
 
+        std::vector<std::vector<unsigned int>>                 sets(layer_filaments.size());
+        std::vector<std::optional<std::vector<unsigned int>>> fixed(layer_filaments.size());
         for (size_t layer = 0; layer < layer_filaments.size(); ++layer) {
-            const auto& curr_lf = layer_filaments[layer];
-
-            if(auto iter = custom_layer_sequence_map.find(layer); iter != custom_layer_sequence_map.end()){
-                auto sequence_in_group = collect_filaments_in_groups<unsigned int>(std::unordered_set<unsigned int>(filament_lists.begin(),filament_lists.end()), iter->second);
-
-                std::optional<unsigned int> prev = curr_filament_id;
-                for (auto& f: sequence_in_group){
-                    if(prev)
-                        cost += flush_matrix[*prev][f];
-                    prev = f;
-                }
-
-                if(!sequence_in_group.empty()){
-                    curr_filament_id = sequence_in_group.back();
-                }
-
-                if(filament_sequences)
-                    filament_sequences->emplace_back(sequence_in_group);
-
-                continue;
-            }
-
-            std::vector<unsigned int> filament_used = collect_filaments_in_groups<unsigned int>(filament_sets, curr_lf);
-            std::vector<unsigned int> next_lf;
-            if (layer + 1 < layer_filaments.size()) next_lf = layer_filaments[layer + 1];
-            std::vector<unsigned int> filament_used_next_layer = collect_filaments_in_groups<unsigned int>(filament_sets, next_lf);
-
-            bool                      use_forcast = false;
-            float                     tmp_cost = 0;
-            std::vector<unsigned int> sequence;
-            uint128_t                 hash_key = filament_list_to_hash_key(filament_used, filament_used_next_layer, curr_filament_id, use_forcast);
-            if (auto iter = caches.find(hash_key); iter != caches.end()) {
-                tmp_cost = iter->second.first;
-                sequence = iter->second.second;
-            }
-            else {
-                sequence = get_extruders_order(flush_matrix, filament_used, filament_used_next_layer, curr_filament_id, use_forcast, &tmp_cost);
-                caches[hash_key] = { tmp_cost,sequence };
-            }
-
-            if (filament_sequences)
-                filament_sequences->emplace_back(sequence);
-
-            if (!sequence.empty())
-                curr_filament_id = sequence.back();
-
-            cost += tmp_cost;
+            if (auto iter = custom_layer_sequence_map.find(layer); iter != custom_layer_sequence_map.end())
+                fixed[layer] = collect_filaments_in_groups<unsigned int>(filament_sets, iter->second);
+            else
+                sets[layer] = collect_filaments_in_groups<unsigned int>(filament_sets, layer_filaments[layer]);
         }
+        std::vector<std::vector<unsigned int>> planned;
+        cost = int(plan_layer_sequences(flush_matrix, sets, fixed, curr_filament_id, planned));
+        if (filament_sequences) *filament_sequences = std::move(planned);
 
         return cost;
     }
@@ -1125,8 +1159,6 @@ namespace Slic3r
         std::vector<std::vector<unsigned int>>* filament_sequences,
         const std::unordered_map<int, int>& nozzle_status)
     {
-        //only when layer filament num <= 5,we do forcast
-        constexpr int max_n_with_forcast = 5;
         int cost = 0;
         std::vector<std::unordered_set<unsigned int>>groups(2); //save the grouped filaments
         std::vector<std::vector<std::vector<unsigned int>>> layer_sequences(2); //save the reordered filament sequence by group
@@ -1158,26 +1190,6 @@ namespace Slic3r
                 custom_layer_sequence_map[layer] = unsign_custom_extruder_seq;
             }
         }
-        using uint128_t = boost::multiprecision::uint128_t;
-        auto extruders_to_hash_key = [](const std::vector<unsigned int>& curr_layer_extruders,
-           const std::vector<unsigned int>& next_layer_extruders,
-           const std::optional<unsigned int>& prev_extruder,
-           bool use_forcast)->uint128_t
-           {
-               uint128_t hash_key = 0;
-               //31-0 bit define current layer extruder,63-32 bit define next layer extruder,95~64 define prev extruder
-               if (prev_extruder)
-                   hash_key |= (uint128_t(1) << (64 + *prev_extruder));
-
-               if (use_forcast) {
-                   for (auto item : next_layer_extruders)
-                       hash_key |= (uint128_t(1) << (32 + item));
-               }
-
-               for (auto item : curr_layer_extruders)
-                   hash_key |= (uint128_t(1) << item);
-               return hash_key;
-           };
 
 
         // get best layer sequence by group
@@ -1193,59 +1205,20 @@ namespace Slic3r
                     current_extruder_id = initial_fil;
             }
 
-            std::unordered_map<uint128_t, std::pair<float, std::vector<unsigned int>>> caches;
-
+            std::vector<std::vector<unsigned int>>                 sets(layer_filaments.size());
+            std::vector<std::optional<std::vector<unsigned int>>> fixed(layer_filaments.size());
             for (size_t layer = 0; layer < layer_filaments.size(); ++layer) {
-                const auto& curr_lf = layer_filaments[layer];
-
-                if (auto iter = custom_layer_sequence_map.find(layer); iter != custom_layer_sequence_map.end()) {
-                    auto sequence_in_group = collect_filaments_in_groups<unsigned int>(groups[idx], iter->second);
-
-                    float tmp_cost = 0;
-                    std::optional<unsigned int>prev = current_extruder_id;
-                    for (auto& f : sequence_in_group) {
-                        if (prev) { tmp_cost += flush_matrix[idx][*prev][f]; }
-                        prev = f;
-                    }
-                    cost += tmp_cost;
-
-                    if (!sequence_in_group.empty())
-                        current_extruder_id = sequence_in_group.back();
-                    //insert an empty array
-                    if (filament_sequences)
-                        layer_sequences[idx].emplace_back(std::vector<unsigned int>());
-
-                    continue;
-                }
-
-                std::vector<unsigned int>filament_used_in_group = collect_filaments_in_groups<unsigned int>(groups[idx], curr_lf);
-
-                std::vector<unsigned int>next_lf;
-                if (layer + 1 < layer_filaments.size())
-                    next_lf = layer_filaments[layer + 1];
-                std::vector<unsigned int>filament_used_in_group_next_layer = collect_filaments_in_groups<unsigned int>(groups[idx], next_lf);
-
-                bool use_forcast = (filament_used_in_group.size() <= max_n_with_forcast && filament_used_in_group_next_layer.size() <= max_n_with_forcast);
-                float tmp_cost = 0;
-                std::vector<unsigned int>sequence;
-                uint128_t hash_key = extruders_to_hash_key(filament_used_in_group, filament_used_in_group_next_layer, current_extruder_id, use_forcast);
-                if (auto iter = caches.find(hash_key); iter != caches.end()) {
-                    tmp_cost = iter->second.first;
-                    sequence = iter->second.second;
-                }
-                else {
-                    sequence = get_extruders_order(flush_matrix[idx], filament_used_in_group, filament_used_in_group_next_layer, current_extruder_id, use_forcast, &tmp_cost);
-                    caches[hash_key] = { tmp_cost,sequence };
-                }
-
-                assert(sequence.size() == filament_used_in_group.size());
-
-                if (filament_sequences)
-                    layer_sequences[idx].emplace_back(sequence);
-
-                if (!sequence.empty())
-                    current_extruder_id = sequence.back();
-                cost += tmp_cost;
+                if (auto iter = custom_layer_sequence_map.find(layer); iter != custom_layer_sequence_map.end())
+                    fixed[layer] = collect_filaments_in_groups<unsigned int>(groups[idx], iter->second);
+                else
+                    sets[layer] = collect_filaments_in_groups<unsigned int>(groups[idx], layer_filaments[layer]);
+            }
+            std::vector<std::vector<unsigned int>> planned;
+            cost += int(plan_layer_sequences(flush_matrix[idx], sets, fixed, current_extruder_id, planned));
+            if (filament_sequences) {
+                for (size_t layer = 0; layer < planned.size(); ++layer)
+                    if (fixed[layer]) planned[layer].clear(); // custom layers are filled in below
+                layer_sequences[idx] = std::move(planned);
             }
         }
 

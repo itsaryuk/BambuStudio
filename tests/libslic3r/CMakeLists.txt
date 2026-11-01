@@ -60,3 +60,8 @@ add_executable(thermal_quality_tests ${_TEST_NAME}_tests.cpp test_thermal_qualit
 target_link_libraries(thermal_quality_tests test_common libslic3r libslic3r_gui)
 set_property(TARGET thermal_quality_tests PROPERTY FOLDER "tests")
 add_test(thermal_quality_tests thermal_quality_tests ${CATCH_EXTRA_ARGS})
+
+add_executable(purge_order_tests ${_TEST_NAME}_tests.cpp test_purge_order.cpp)
+target_link_libraries(purge_order_tests test_common libslic3r libslic3r_gui)
+set_property(TARGET purge_order_tests PROPERTY FOLDER "tests")
+add_test(purge_order_tests purge_order_tests ${CATCH_EXTRA_ARGS})
