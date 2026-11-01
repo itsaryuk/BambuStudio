@@ -157,6 +157,7 @@ protected:
 	ScalableButton*		m_btn_compare_preset;
 	ScalableButton*		m_btn_save_preset;
 	ScalableButton*		m_btn_delete_preset;
+	ScalableButton*		m_btn_copy_preset{nullptr}; // filament / process: copy this user preset to other printers
 	//ScalableButton*		m_btn_edit_ph_printer {nullptr};
 	//ScalableButton*		m_btn_hide_incompatible_presets;
 	//wxBoxSizer*			m_hsizer;
@@ -361,6 +362,7 @@ public:
 	//void		save_preset(std::string name = std::string(), bool detach = false);
 
 	void		delete_preset();
+	void		copy_preset_to_printers();
 	void		toggle_show_hide_incompatible();
 	void		update_show_hide_incompatible_button();
 	void		update_ui_from_settings();
