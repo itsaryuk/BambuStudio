@@ -191,12 +191,12 @@ ThermalOptimizationInputDialog::ThermalOptimizationInputDialog(wxWindow* parent,
     m_chamber = new wxSpinCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(80), -1), wxSP_ARROW_KEYS, 0, 120,
                                int(std::max(0.f, params.empty() ? 0.f : params.front().chamber_temp)));
     row(_L("Air around the part (°C, 0 = open frame)"), m_chamber, _L("Prefilled from the printer and filament presets: a heated chamber, or the bed warming an enclosure."));
-    m_speed_up = new wxSpinCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(80), -1), wxSP_ARROW_KEYS, 0, 100,
+    m_speed_up = new wxSpinCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(80), -1), wxSP_ARROW_KEYS, 0, 300,
                                 int(std::lround((options.max_speed_factor - 1.f) * 100.f)));
-    auto* l_up = row(_L("Speed up cold layers by at most (%)"), m_speed_up, _L("Cold layers print faster, up to this much and never past the filament's volumetric limit."));
+    auto* l_up = row(_L("Speed up cool layers by at most (%)"), m_speed_up, _L("Layers that cool well before the next one lands print faster, up to this much and never past the volumetric limit."));
     m_slow_down = new wxSpinCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(80), -1), wxSP_ARROW_KEYS, 0, 90,
                                  int(std::lround((1.f - options.min_speed_factor) * 100.f)));
-    auto* l_down = row(_L("Slow down hot layers by at most (%)"), m_slow_down, _L("Hot layers print slower, down to this much and never below the filament's minimum speed."));
+    auto* l_down = row(_L("Slow down hot layers by at most (%)"), m_slow_down, _L("Hot layers print slower, down to this much, even below the filament's minimum speed: a layer still hot at that speed needs more time. Layers that are not hot are never slowed."));
     m_max_volumetric = new wxSpinCtrlDouble(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(80), -1), wxSP_ARROW_KEYS, 0., 100.,
                                             std::max(0.f, options.max_volumetric), 0.5);
     auto* l_vol = row(_L("Volumetric speed limit (mm³/s, 0 = filament's)"), m_max_volumetric, _L("Upper flow limit for sped-up layers. 0 uses the filament profile's maximum volumetric speed."));

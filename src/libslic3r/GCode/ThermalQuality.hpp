@@ -49,14 +49,14 @@ using ThermalMaterials = std::vector<ThermalModelParams>;
 
 struct ThermalOptimizeOptions
 {
-    float min_speed_factor{0.6f};
-    float max_speed_factor{1.4f};
+    float min_speed_factor{0.5f};
+    float max_speed_factor{3.0f};  // flow and speed caps usually bind first
     float max_speed{-1.f};        // mm/s, <= 0: no cap
     float max_volumetric{-1.f};   // mm³/s, <= 0: no cap
     bool  keep_outer_walls{false};
     int   first_layer{1};         // 0-based, inclusive. Layer 0 is never touched.
     int   last_layer{-1};         // -1: to the end
-    int   passes{3};
+    int   passes{6};
     float max_pause{0.f};         // s per layer: park away from the part and wait on layers that cannot cool in time; 0 = off
 };
 

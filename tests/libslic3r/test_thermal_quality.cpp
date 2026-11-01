@@ -269,15 +269,15 @@ TEST_CASE("Thermal quality: material classes, per-filament models, profile floor
     for (const auto& f : two.fixes) warp_advice |= f.second.find("enclosure") != std::string::npos || f.second.find("warps") != std::string::npos;
     if (two.direction != "NONE") REQUIRE(warp_advice);
 
-    // Profile slow-down floor and max volumetric cap, without dialog overrides.
+    // A layer still hot at the profile's slow-down floor goes below it, down to the slow-down limit; max volumetric caps speed-ups.
     Scene c(false, true); // hot column at 8 mm/s gets slowed down
     ThermalOptimizeOptions o;
     o.keep_outer_walls = false;
     ThermalMaterials floor_mats = {pla_cold_bed()};
-    floor_mats[0].min_speed    = 7.f; // 7/8 = 0.875 floor
+    floor_mats[0].min_speed    = 7.9f; // 7.9/8: the slicer already runs it at its floor
     std::vector<float> f = ThermalQuality::optimize(c.result, c.move_layers, floor_mats, o);
-    REQUIRE(f[5] >= 0.875f - 1e-4f);
-    REQUIRE(f[5] < 0.95f);
+    REQUIRE(f[5] < 7.9f / 8.f);
+    REQUIRE(f[5] >= o.min_speed_factor);
     Scene slab(true, false);
     ThermalMaterials cap_mats = {pla_cold_bed()};
     cap_mats[0].max_volumetric = 2.6f; // 30 mm/s * 0.084 = 2.52 mm3/s
@@ -444,8 +444,12 @@ TEST_CASE("run the engine on a real G-code file", "[.][thermal_file]")
     ThermalGCodeText text;
     REQUIRE(ThermalGCodeText::load(path, text));
     const std::vector<int> layers = ThermalQuality::layers_of_moves(r, text.line_layers);
-    ThermalModelParams p = ThermalModelParams::for_material("PETG", -1.f);
-    p.min_speed = 20.f; p.max_volumetric = 21.f; p.bed_temp = 70.f;
+    auto env = [](const char* k, float d) { const char* v = std::getenv(k); return v != nullptr ? float(std::atof(v)) : d; };
+    const char* mat_name = std::getenv("THERMAL_MATERIAL");
+    ThermalModelParams p = ThermalModelParams::for_material(mat_name != nullptr ? mat_name : "PETG", -1.f);
+    p.min_speed = env("THERMAL_MIN_SPEED", 20.f); p.max_volumetric = env("THERMAL_MAX_VOL", 21.f); p.bed_temp = env("THERMAL_BED", 70.f);
+    p.cooling_time_const = env("THERMAL_TAU", p.cooling_time_const);
+    p.chamber_temp = env("THERMAL_CHAMBER", p.chamber_temp); p.bed_air_decay_height = env("THERMAL_DECAY", p.bed_air_decay_height);
     ThermalMaterials       mats{p};
     ThermalOptimizeOptions o;
     ThermalReport          rep = ThermalQuality::simulate(r, layers, mats);
@@ -473,6 +477,11 @@ TEST_CASE("run the engine on a real G-code file", "[.][thermal_file]")
             std::printf("  --\n");
         }
     std::printf("time_factor %.3f\n", ThermalQuality::time_factor(r, layers, f, o));
+    if (std::getenv("THERMAL_LAYERS") != nullptr) {
+        const ThermalReport after = ThermalQuality::simulate(r, layers, mats, &f, &o);
+        for (size_t L = 0; L < f.size(); L += 4)
+            std::printf("  z %5.1f  mean before %+.2f after %+.2f  factor %.2f\n", rep.layer_z[L], rep.layer_mean[L], after.layer_mean[L], f[L]);
+    }
     if (const char* h = std::getenv("THERMAL_CALIB_HEIGHT")) { // emulate Calibrate at that height, then optimize with the fitted constant
         const float height = float(std::atof(h));
         int cal_layer = -1, slot = 0;

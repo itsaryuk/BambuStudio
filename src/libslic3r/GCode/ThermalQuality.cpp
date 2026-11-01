@@ -556,19 +556,24 @@ std::vector<float> ThermalQuality::optimize(const GCodeProcessorResult&   result
         const float max_vol = options.max_volumetric > 0.f ? options.max_volumetric : mat.max_volumetric; // dialog overrides the profile
         if (options.max_speed > 0.f && m.feedrate > 0.f) cap[L] = std::min(cap[L], options.max_speed / m.feedrate);
         if (max_vol > 0.f && m.volumetric_rate() > 0.f) cap[L] = std::min(cap[L], max_vol / m.volumetric_rate());
-        if (mat.min_speed > 0.f && m.feedrate > 0.f) floor[L] = std::max(floor[L], std::min(1.f, mat.min_speed / m.feedrate)); // never below the profile slow-down floor
+        // No profile slow-down floor: the slicer already holds that speed on short layers, and a layer still hot there
+        // has to go slower (the user's slow-down limit bounds it). Layers that are not hot are never slowed at all.
     }
     for (int L = 0; L < n_layers; ++L) cap[L] = std::max(cap[L], floor[L]);
 
+    // Aim every layer just below the hot edge (index 0.8): cooler layers print faster until they warm into the band or hit
+    // the speed/flow cap, hotter ones slow down. Fully cooled layers stay cool however fast they go, so they reach the cap.
+    constexpr float band_lo = 0.3f, band_hi = 0.5f; // index 0.3 (≈12 °C for PLA) of margin under the hot edge
     for (int pass = 0; pass < std::max(options.passes, 1); ++pass) {
         ThermalReport rep = simulate(result, move_layers, materials, &factors, &options);
         for (int L = 0; L < n_layers; ++L) {
             if (!touched[L]) continue;
-            const float m = rep.layer_mean[L];
-            if (m < -0.3f)
-                factors[L] *= 1.f + 0.5f * (-0.3f - m);
-            else if (m > 0.3f)
-                factors[L] *= 1.f - 0.5f * (m - 0.3f);
+            // Unclamped temperature in index units: the index saturates at +1, the excess heat does not.
+            const float m = 0.8f + (rep.layer_substrate_temp[L] - rep.layer_hot_edge[L]) / std::max(material_for(materials, 0).window_half_width, 1.f);
+            if (m < band_lo)
+                factors[L] *= 1.f + std::max(0.15f, band_lo - m);
+            else if (m > band_hi)
+                factors[L] *= 1.f - std::min(0.5f, std::max(0.1f, 0.5f * (m - band_hi)));
             factors[L] = std::clamp(factors[L], floor[L], cap[L]);
         }
     }
