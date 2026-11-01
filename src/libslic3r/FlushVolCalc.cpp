@@ -130,7 +130,9 @@ int FlushVolCalculator::calc_flush_vol(const std::string& src_filament_id, const
     // Override with measured purge when this filament-id pair has test data.
     float measured_purge = 0.f;
     if (query_measured_purge_volume(src_filament_id, dst_filament_id, measured_purge)) {
-        int final_purge = std::min(std::max(predicted_purge, (int)measured_purge), m_max_flush_vol);
+        // A measurement for this exact pair beats the colour formula in both directions; it may lower the prediction by at
+        // most 30 %, so one bad data point cannot starve the purge.
+        int final_purge = std::min(std::max((int)measured_purge, int(0.7f * predicted_purge)), m_max_flush_vol);
         BOOST_LOG_TRIVIAL(info) << "measured purge hit: " << src_filament_id << " -> " << dst_filament_id
             << ", predicted=" << predicted_purge << ", measured=" << (int)measured_purge << ", final=" << final_purge;
         return final_purge;
