@@ -717,6 +717,7 @@ namespace Slic3r
                 m_p_layer_manager->update_per_move_data(m_view_type, *m_gcode_result);
 
                 render_toolpaths();
+                render_section_plane();
                 //render_shells();
                 render_legend(m_legend_height, canvas_width, canvas_height, right_margin);
                 if (m_user_mode != wxGetApp().get_mode()) {
@@ -1161,6 +1162,7 @@ namespace Slic3r
                 p_shader->set_uniform("view_model_matrix", view_matrix);
                 p_shader->set_uniform("projection_matrix", camera.get_projection_matrix());
                 p_shader->set_uniform("normal_matrix", (Matrix3d)view_matrix.matrix().block(0, 0, 3, 3).inverse().transpose());
+                p_shader->set_uniform("u_section_plane", get_section_plane());
 
                 auto data_range = get_range_according_to_view_type(m_view_type);
                 Range::EType range_type = Range::EType::Linear;
@@ -1296,6 +1298,7 @@ namespace Slic3r
                 p_shader->set_uniform("view_model_matrix", view_matrix);
                 p_shader->set_uniform("projection_matrix", camera.get_projection_matrix());
                 p_shader->set_uniform("normal_matrix", (Matrix3d)view_matrix.matrix().block(0, 0, 3, 3).inverse().transpose());
+                p_shader->set_uniform("u_section_plane", get_section_plane());
                 bool b_unlit = false;
                 p_shader->set_uniform("u_isUnlit_optionTextureSize_topLayerOnly_emissionFactor", Vec4f(float(b_unlit), float(Options_Colors.size()), float(top_layer_only), 0.25f));
 
@@ -1370,6 +1373,7 @@ namespace Slic3r
                 const Transform3d& view_matrix = camera.get_view_matrix();
                 const auto normal_matrix = (Matrix3d)view_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
                 const auto proj_matrix = camera.get_projection_matrix();
+                const Vec4f section_plane = get_section_plane();
 
                 const auto& t_top_layer_index = p_layer_manager->get_current_layer_end();
 
@@ -1399,6 +1403,7 @@ namespace Slic3r
                         p_shader->set_uniform("view_model_matrix", view_matrix);
                         p_shader->set_uniform("projection_matrix", proj_matrix);
                         p_shader->set_uniform("normal_matrix", normal_matrix);
+                        p_shader->set_uniform("u_section_plane", section_plane);
 
                         uint8_t position_texture_stage = texture_stage++;
                         t_layer.bind_position_data_texture(position_texture_stage);

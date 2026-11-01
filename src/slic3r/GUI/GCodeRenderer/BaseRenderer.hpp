@@ -185,6 +185,11 @@ namespace Slic3r {
                 void render_shells();
                 void render_slider(int canvas_width, int canvas_height);
                 virtual void render_legend(float& legend_height, int canvas_width, int canvas_height, int right_margin);
+                // Section view: plane as (normal, d), toolpaths with dot(world_pos, plane) < 0 are discarded.
+                // Returns (0,0,0,0) when the section view is off, which never clips.
+                Vec4f get_section_plane() const;
+                void render_section_controls();
+                void render_section_plane();
                 void apply_view_type_selection(int view_type_sel, EViewType type);
                 void update_by_mode(ConfigOptionMode mode);
                 void update_thermal_options(bool add);
@@ -238,6 +243,11 @@ namespace Slic3r {
                 unsigned int m_last_result_id{ 0 };
                 mutable std::shared_ptr<SequentialView> m_p_sequential_view{ nullptr };
                 float m_scale{ 1.0 };
+                bool m_section_enabled{ false };
+                float m_section_rotation{ 0.0f }; // degrees around Z
+                float m_section_tilt{ 0.0f };     // degrees from vertical
+                float m_section_offset{ 0.0f };   // mm along the normal from the toolpaths center
+                GLModel m_section_plane_model;
                 std::vector<unsigned char> m_extruder_ids;
                 //BBS: extruder dispensing filament
                 std::vector<ExtruderFilament> m_left_extruder_filament;

@@ -9,9 +9,12 @@ uniform vec4 light_intensity;
 uniform vec4 uniform_color;
 
 varying vec3 eye_normal;
+varying float section_dot;
 
 void main()
 {
+    if (section_dot < 0.0)
+        discard;
     vec3 normal = normalize(eye_normal);
 
     // Compute the cos of the angle between the normal and lights direction. The light is directional so the direction is constant for every vertex.

@@ -342,6 +342,7 @@ namespace Slic3r {
                 if (m_roles.empty())
                     return;
                 render_toolpaths();
+                render_section_plane();
                 //render_shells();
                 render_legend(m_legend_height, canvas_width, canvas_height, right_margin);
                 if (m_user_mode != wxGetApp().get_mode()) {
@@ -2259,6 +2260,7 @@ namespace Slic3r {
                                         shader->set_uniform("view_model_matrix", view_matrix);
                                         shader->set_uniform("projection_matrix", camera.get_projection_matrix());
                                         shader->set_uniform("normal_matrix", (Matrix3d)view_matrix.matrix().block(0, 0, 3, 3).inverse().transpose());
+                                        shader->set_uniform("u_section_plane", get_section_plane());
                                         if (buffer.render_primitive_type == TBuffer::ERenderPrimitiveType::InstancedModel) {
                                             shader->set_uniform("emission_factor", 0.25f);
                                             render_as_instanced_model(buffer, *shader);
@@ -2353,6 +2355,8 @@ namespace Slic3r {
                                                 glsafe(::glBindBuffer(GL_ARRAY_BUFFER, 0));
                                             }
                                         }
+                                        // gouraud_light is shared with non-toolpath geometry, do not leave the plane set
+                                        shader->set_uniform("u_section_plane", Vec4f(Vec4f::Zero()));
                                         wxGetApp().unbind_shader();
                                     }
                                 }

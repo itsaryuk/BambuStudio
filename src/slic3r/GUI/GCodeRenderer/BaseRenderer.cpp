@@ -2736,10 +2736,102 @@ namespace Slic3r
                 ImGui::Dummy({ window_padding, window_padding });
                 if (m_nozzle_nums > 1)
                     render_legend_color_arr_recommen(window_padding, is_show_left_right_result);
+                render_section_controls();
                 legend_height = ImGui::GetCurrentWindow()->Size.y;
                 imgui.end();
                 ImGui::PopStyleColor(7);
                 ImGui::PopStyleVar(2);
+            }
+
+            Vec4f BaseRenderer::get_section_plane() const
+            {
+                if (!m_section_enabled || !m_paths_bounding_box.defined)
+                    return Vec4f::Zero();
+                const double rotation = Geometry::deg2rad(double(m_section_rotation));
+                const double tilt     = Geometry::deg2rad(double(m_section_tilt));
+                const Vec3d  normal(std::cos(rotation) * std::cos(tilt), std::sin(rotation) * std::cos(tilt), std::sin(tilt));
+                const double d = -(normal.dot(m_paths_bounding_box.center()) + double(m_section_offset));
+                return Vec4f(float(normal.x()), float(normal.y()), float(normal.z()), float(d));
+            }
+
+            void BaseRenderer::render_section_controls()
+            {
+                if (!m_paths_bounding_box.defined)
+                    return;
+                const float window_padding = 4.0f * m_scale;
+                const float half_extent    = 0.5f * float(m_paths_bounding_box.size().norm());
+                bool changed = false;
+                ImGui::Dummy({ window_padding, window_padding });
+                ImGui::SameLine();
+                changed |= ImGui::Checkbox(_u8L("Section view").c_str(), &m_section_enabled);
+                if (m_section_enabled) {
+                    auto slider = [&](const std::string& label, float* value, float min, float max, const char* format) {
+                        ImGui::Dummy({ window_padding, window_padding });
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(150.0f * m_scale);
+                        changed |= ImGui::SliderFloat(label.c_str(), value, min, max, format);
+                    };
+                    m_section_offset = std::clamp(m_section_offset, -half_extent, half_extent);
+                    slider(_u8L("Rotation"), &m_section_rotation, 0.0f, 360.0f, "%.0f deg");
+                    slider(_u8L("Tilt"), &m_section_tilt, -90.0f, 90.0f, "%.0f deg");
+                    slider(_u8L("Offset"), &m_section_offset, -half_extent, half_extent, "%.1f mm");
+                }
+                ImGui::Dummy({ window_padding, window_padding });
+                if (changed) {
+                    GLCanvas3D* canvas = wxGetApp().plater()->get_current_canvas3D();
+                    canvas->set_as_dirty();
+                    canvas->request_extra_frame();
+                }
+            }
+
+            void BaseRenderer::render_section_plane()
+            {
+                if (!m_section_enabled || !m_paths_bounding_box.defined)
+                    return;
+                const auto& shader = wxGetApp().get_shader("flat");
+                if (!shader)
+                    return;
+                if (!m_section_plane_model.is_initialized()) {
+                    // unit square in the XY plane, placed by the model matrix below
+                    GLModel::Geometry init_data;
+                    init_data.format = { GLModel::PrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3 };
+                    init_data.color  = ColorRGBA(0.0f, 0.68f, 0.26f, 0.25f);
+                    init_data.add_vertex(Vec3f(-1.0f, -1.0f, 0.0f));
+                    init_data.add_vertex(Vec3f(1.0f, -1.0f, 0.0f));
+                    init_data.add_vertex(Vec3f(1.0f, 1.0f, 0.0f));
+                    init_data.add_vertex(Vec3f(-1.0f, 1.0f, 0.0f));
+                    init_data.add_triangle(0, 1, 2);
+                    init_data.add_triangle(0, 2, 3);
+                    m_section_plane_model.init_from(std::move(init_data));
+                }
+                const double rotation    = Geometry::deg2rad(double(m_section_rotation));
+                const Vec3d  normal      = get_section_plane().head<3>().cast<double>();
+                const Vec3d  u_axis(-std::sin(rotation), std::cos(rotation), 0.0); // horizontal, lies in the plane
+                const Vec3d  v_axis      = normal.cross(u_axis);
+                const double half_extent = 0.5 * m_paths_bounding_box.size().norm();
+                Transform3d model_matrix = Transform3d::Identity();
+                model_matrix.linear().col(0) = half_extent * u_axis;
+                model_matrix.linear().col(1) = half_extent * v_axis;
+                model_matrix.linear().col(2) = normal;
+                model_matrix.translation()   = m_paths_bounding_box.center() + double(m_section_offset) * normal;
+
+                const Camera& camera = wxGetApp().plater()->get_camera();
+                wxGetApp().bind_shader(shader);
+                shader->set_uniform("view_model_matrix", camera.get_view_matrix() * model_matrix);
+                shader->set_uniform("projection_matrix", camera.get_projection_matrix());
+                const GLboolean was_blend = ::glIsEnabled(GL_BLEND);
+                const GLboolean was_cull  = ::glIsEnabled(GL_CULL_FACE);
+                glsafe(::glEnable(GL_BLEND));
+                glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+                glsafe(::glDisable(GL_CULL_FACE));
+                glsafe(::glDepthMask(GL_FALSE));
+                m_section_plane_model.render_geometry();
+                glsafe(::glDepthMask(GL_TRUE));
+                if (was_cull)
+                    glsafe(::glEnable(GL_CULL_FACE));
+                if (!was_blend)
+                    glsafe(::glDisable(GL_BLEND));
+                wxGetApp().unbind_shader();
             }
 
             void BaseRenderer::delete_wipe_tower()

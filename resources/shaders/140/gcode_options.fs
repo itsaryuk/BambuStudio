@@ -23,6 +23,7 @@ uniform samplerBuffer s_per_move_data_texture;
 in float moveId;
 in vec3 frag_normal;
 in vec3 frag_pos;
+in float section_dot;
 
 out vec4 frag_color;
 
@@ -49,6 +50,8 @@ vec4 get_base_color(float moveType)
 
 void main()
 {
+    if (section_dot < 0.0)
+        discard;
     float moveType = texelFetch(s_per_move_data_texture, int(moveId)).r;
 
     vec4 base_color = get_base_color(moveType);

@@ -24,11 +24,14 @@ uniform vec4 u_base_color;
 
 in vec3 frag_normal;
 in vec3 frag_pos;
+in float section_dot;
 
 out vec4 frag_color;
 
 void main()
 {
+    if (section_dot < 0.0)
+        discard;
     // x = tainted, y = specular;
     vec2 intensity = vec2(0.0, 0.0);
     float t_emission_factor = emission_factor;

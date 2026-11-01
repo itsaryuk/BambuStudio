@@ -27,6 +27,7 @@ uniform mat4 projection_matrix;
 
 // x = tainted, y = specular;
 out vec2 intensity;
+out float section_dot;
 
 mat3 inverse_mat3(mat3 m) {
   float a00 = m[0][0], a01 = m[0][1], a02 = m[0][2];
@@ -46,6 +47,7 @@ mat3 inverse_mat3(mat3 m) {
 
 void main()
 {
+    section_dot = 0.0;
     mat4 view_model_matrix = view_matrix * instanceMatrix;
 
     // First transform the normal into camera space and normalize the result.

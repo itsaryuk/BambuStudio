@@ -23,9 +23,11 @@ attribute vec2 i_scales;
 
 // x = tainted, y = specular;
 varying vec2 intensity;
+varying float section_dot;
 
 void main()
 {
+    section_dot = 0.0;
     // First transform the normal into camera space and normalize the result.
     vec3 eye_normal = normalize(gl_NormalMatrix * v_normal);
     

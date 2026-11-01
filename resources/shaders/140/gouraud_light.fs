@@ -7,8 +7,11 @@ uniform float emission_factor;
 in vec2 intensity;
 
 out vec4 frag_color;
+in float section_dot;
 
 void main()
 {
+    if (section_dot < 0.0)
+        discard;
     frag_color = vec4(vec3(intensity.y) + uniform_color.rgb * (intensity.x + emission_factor), uniform_color.a);
 }

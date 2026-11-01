@@ -32,6 +32,7 @@ uniform samplerBuffer s_per_move_data_texture;
 in float moveId;
 in vec3 frag_normal;
 in vec3 frag_pos;
+in float section_dot;
 
 out vec4 frag_color;
 
@@ -138,6 +139,8 @@ vec4 get_base_color(vec3 type_rangeData_deltaExtruder)
 
 void main()
 {
+    if (section_dot < 0.0)
+        discard;
     vec4 custom_option_color = vec4(0.5, 0.5, 0.5, 1.0);
 
     vec3 type_rangeData_deltaExtruder = texelFetch(s_per_move_data_texture, int(moveId)).rgb;

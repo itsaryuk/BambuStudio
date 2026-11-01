@@ -10,7 +10,10 @@ uniform samplerBuffer s_position_texture;
 uniform samplerBuffer s_width_height_data_texture;
 uniform samplerBuffer s_segment_texture;
 
+uniform vec4 u_section_plane;
+
 out float moveId;
+out float section_dot;
 out vec3 frag_normal;
 out vec3 frag_pos;
 
@@ -32,7 +35,9 @@ void main()
     0.0,   width, 0.0, 0.0,
     0.0,   0.0,   1.5 * height, 0.0,
     endPos_mid.x,   endPos_mid.y,   endPos_mid.z - 0.5 * height,  1.0);
-    vec4 final_position = view_model_matrix * model_matrix * vec4(v_position, 1.0);
+    vec4 world_position = model_matrix * vec4(v_position, 1.0);
+    section_dot = dot(world_position, u_section_plane);
+    vec4 final_position = view_model_matrix * world_position;
     frag_pos = final_position.xyz;
     frag_normal = normalize(v_normal);
     gl_Position = projection_matrix * final_position;

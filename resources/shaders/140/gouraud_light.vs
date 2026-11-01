@@ -20,6 +20,9 @@ in vec3 v_normal;
 uniform mat4 view_model_matrix;
 uniform mat4 projection_matrix;
 uniform mat3 normal_matrix;
+// G-code preview section view, (0,0,0,0) never clips. Assumes v_position is in world space.
+uniform vec4 u_section_plane;
+out float section_dot;
 
 // x = tainted, y = specular;
 out vec2 intensity;
@@ -41,5 +44,6 @@ void main()
     NdotL = max(dot(normal, LIGHT_FRONT_DIR), 0.0);
     intensity.x += NdotL * LIGHT_FRONT_DIFFUSE;
 
+    section_dot = dot(vec4(v_position, 1.0), u_section_plane);
     gl_Position = projection_matrix * position;
 }
