@@ -1048,6 +1048,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                flush_into_objects))
     // BBS
     ((ConfigOptionBool,                flush_into_infill))
+    ((ConfigOptionBool,                flush_into_infill_auto))
     ((ConfigOptionBool,                flush_into_support))
     //((ConfigOptionEnum<WallSequence>,  wall_sequence))
     // BBS

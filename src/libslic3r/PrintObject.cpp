@@ -1796,7 +1796,7 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "slowdown_end_acc" ) {
             invalidated |= m_print->invalidate_step(psGCodeExport);
         } else if (
-               opt_key == "flush_into_infill"
+               opt_key == "flush_into_infill" || opt_key == "flush_into_infill_auto"
             || opt_key == "flush_into_objects"
             || opt_key == "flush_into_support") {
             invalidated |= m_print->invalidate_step(psWipeTower);

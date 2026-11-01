@@ -6497,6 +6497,14 @@ void PrintConfigDef::init_fff_params()
     def->min      = 100;
     def->set_default_value(new ConfigOptionPercent(150));
 
+    def = this->add("flush_into_infill_auto", coBool);
+    def->category = L("Flush options");
+    def->label = L("Automatic flush into infill");
+    def->tooltip = L("Purge into the sparse infill of regions where it cannot show or weaken the part, even when "
+        "\"Flush into objects' infill\" is off: every filament on the plate is the same material type, none is translucent, "
+        "the region has at least 2 walls and 3 top and bottom layers, and no filament is much darker than the wall.");
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("flush_into_infill", coBool);
     def->category = L("Flush options");
     def->label = L("Flush into objects' infill");

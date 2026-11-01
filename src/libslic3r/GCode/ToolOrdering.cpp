@@ -3026,6 +3026,34 @@ int WipingExtrusions::last_nonsoluble_extruder_on_layer(const PrintConfig& print
     return (-1);
 }
 
+bool WipingExtrusions::infill_flush_on(const PrintObject &object, const PrintRegion &region) const
+{
+    if (object.config().flush_into_infill) return true;
+    if (!object.config().flush_into_infill_auto) return false;
+    if (auto it = m_auto_infill_flush.find(&region); it != m_auto_infill_flush.end()) return it->second;
+    // An infill offered for purging prints in whatever filament the layer ends with when nothing purges into it, so the
+    // check covers every filament on the plate, not just the pair of one change.
+    const PrintConfig&       pc = object.print()->config();
+    const PrintRegionConfig& rc = region.config();
+    auto luminance = [](const std::string& c, bool& translucent) { // "#RRGGBB" or "#RRGGBBAA", 0..1
+        const unsigned long v = c.size() >= 7 ? std::strtoul(c.substr(1, 6).c_str(), nullptr, 16) : 0xffffffUL;
+        translucent |= c.size() >= 9 && c.substr(7, 2) != "FF" && c.substr(7, 2) != "ff";
+        return (0.3f * ((v >> 16) & 0xff) + 0.59f * ((v >> 8) & 0xff) + 0.11f * (v & 0xff)) / 255.f;
+    };
+    bool ok = rc.wall_loops.value >= 2 && rc.top_shell_layers.value >= 3 && rc.bottom_shell_layers.value >= 3;
+    bool translucent = false;
+    const unsigned int wall = rc.wall_filament.value > 0 ? rc.wall_filament.value - 1 : 0;
+    const float wall_lum = luminance(pc.filament_colour.get_at(wall), translucent);
+    for (unsigned int f : object.print()->extruders(true)) {
+        if (pc.filament_soluble.get_at(f)) continue; // never purged into infill anyway
+        ok &= pc.filament_type.get_at(f) == pc.filament_type.get_at(wall); // mixed materials would weaken the part
+        ok &= wall_lum - luminance(pc.filament_colour.get_at(f), translucent) <= 0.25f; // a darker infill shows through a light wall
+    }
+    ok &= !translucent;
+    m_auto_infill_flush[&region] = ok;
+    return ok;
+}
+
 // Decides whether this entity could be overridden
 bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, const PrintConfig& print_config, const PrintObject& object, const PrintRegion& region) const
 {
@@ -3035,7 +3063,7 @@ bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, con
     if (object.config().flush_into_objects)
         return true;
 
-    if (!object.config().flush_into_infill || eec.role() != erInternalInfill)
+    if (eec.role() != erInternalInfill || !infill_flush_on(object, region))
         return false;
 
     return true;
@@ -3124,9 +3152,10 @@ float WipingExtrusions::mark_wiping_extrusions(const Print& print, unsigned int 
             for (const LayerRegion *layerm : this_layer->regions()) {
                 const auto &region = layerm->region();
 
-                if (!object->config().flush_into_infill && !object->config().flush_into_objects && !object->config().flush_into_support)
+                const bool infill_on = infill_flush_on(*object, region);
+                if (!infill_on && !object->config().flush_into_objects && !object->config().flush_into_support)
                     continue;
-                bool wipe_into_infill_only = !object->config().flush_into_objects && object->config().flush_into_infill;
+                bool wipe_into_infill_only = !object->config().flush_into_objects && infill_on;
                 bool is_infill_first = print.config().is_infill_first;
                 if (is_infill_first != perimeters_done || wipe_into_infill_only) {
                     for (const ExtrusionEntity* ee : layerm->fills.entities) {                      // iterate through all infill Collections
@@ -3237,7 +3266,7 @@ void WipingExtrusions::ensure_perimeters_infills_order(const Print& print)
             for (const LayerRegion *layerm : this_layer->regions()) {
                 const auto &region = layerm->region();
                 //BBS
-                if (!object->config().flush_into_infill && !object->config().flush_into_objects)
+                if (!infill_flush_on(*object, region) && !object->config().flush_into_objects)
                     continue;
 
                 bool is_infill_first = print.config().is_infill_first;

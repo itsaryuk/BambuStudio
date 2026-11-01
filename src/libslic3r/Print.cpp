@@ -342,7 +342,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "flush_volumes_matrix"
             || opt_key == "filament_prime_volume"
             || opt_key == "filament_prime_volume_nc"
-            || opt_key == "flush_into_infill"
+            || opt_key == "flush_into_infill" || opt_key == "flush_into_infill_auto"
             || opt_key == "flush_into_support"
             || opt_key == "initial_layer_infill_speed"
             || opt_key == "travel_speed"

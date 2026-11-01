@@ -56,6 +56,8 @@ public:
     }
     //for byobject mode, there are no config, but object still have overridable setting
     bool is_obj_overriddable(const ExtrusionEntityCollection &ee, const PrintObject &object) const;
+    // flush_into_infill, or flush_into_infill_auto where purging into this region's sparse infill cannot show or weaken it.
+    bool infill_flush_on(const PrintObject &object, const PrintRegion &region) const;
     bool is_obj_overriddable_and_mark(const ExtrusionEntityCollection &ee, const PrintObject &object)
     {
         bool out = this->is_obj_overriddable(ee, object);
@@ -102,6 +104,7 @@ private:
     std::map<const PrintObject*, int> support_map;
     std::map<const PrintObject*, int> support_intf_map;
     bool something_overridable = false;
+    mutable std::map<const PrintRegion*, bool> m_auto_infill_flush; // per region, see infill_flush_on()
     bool something_overridden = false;
     const LayerTools* m_layer_tools = nullptr;    // so we know which LayerTools object this belongs to
 };
