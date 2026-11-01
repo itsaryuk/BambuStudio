@@ -3985,6 +3985,12 @@ void Print::_make_wipe_tower()
                     wipe_volume_ec = 15.f;
                     wipe_volume_nc = 15.f;
                 }
+                // A big purge has just run the new filament through the nozzle and settled its pressure, so the tower only needs
+                // the saving-mode prime. Only within one nozzle (a nozzle coming back from idle needs its full prime) and not on
+                // the first layer, where the tower lines must stick.
+                const auto old_nozzle = group_result->get_nozzle_for_filament(old_filament_id, layer_idx);
+                if (layer_idx > 0 && volume_to_purge >= 150.f && old_nozzle && old_nozzle->group_id == nozzle_id)
+                    wipe_volume_ec = std::min(wipe_volume_ec, 15.f);
                 wipe_tower.plan_toolchange((float)layer_tools.print_z, (float)layer_tools.wipe_tower_layer_height, old_filament_id, filament_id,
                                            wipe_volume_ec, wipe_volume_nc, volume_to_purge);
                 old_filament_id = filament_id;
