@@ -3,6 +3,7 @@
 #include "I18N.hpp"
 #include "libslic3r/Utils.hpp"
 #include <boost/log/trivial.hpp>
+#include <algorithm>
 #include <wx/dcclient.h>
 #include <wx/dcgraph.h>
 #include <wx/graphics.h>
@@ -38,6 +39,27 @@ wxMediaCtrl3::wxMediaCtrl3(wxWindow *parent)
     m_render_timer.SetOwner(this);
     Bind(wxEVT_TIMER, &wxMediaCtrl3::OnRenderTimer, this);
     Bind(wxEVT_MOUSEWHEEL, &wxMediaCtrl3::mouseWheelEvent, this);
+    for (auto type : {wxEVT_LEFT_DOWN, wxEVT_LEFT_UP, wxEVT_MOTION})
+        Bind(type, &wxMediaCtrl3::mouseDragEvent, this);
+    Bind(wxEVT_MOUSE_CAPTURE_LOST, [](wxMouseCaptureLostEvent &) {});
+}
+
+// Left-drag moves the zoomed picture; the paint clamps it so the video always covers the view.
+void wxMediaCtrl3::mouseDragEvent(wxMouseEvent &evt)
+{
+    evt.Skip(); // the fullscreen frame also watches motion to show its controls
+    if (evt.LeftDown() && m_zoom > 1.0) {
+        m_drag_from = evt.GetPosition();
+        if (!HasCapture()) CaptureMouse();
+    } else if (evt.LeftUp()) {
+        if (HasCapture()) ReleaseMouse();
+    } else if (evt.Dragging() && evt.LeftIsDown() && HasCapture()) {
+        const wxPoint d = evt.GetPosition() - m_drag_from;
+        m_drag_from     = evt.GetPosition();
+        m_pan_x += d.x / m_view_scale;
+        m_pan_y += d.y / m_view_scale;
+        Refresh();
+    }
 }
 
 void wxMediaCtrl3::mouseWheelEvent(wxMouseEvent &evt)
@@ -59,6 +81,7 @@ void wxMediaCtrl3::mouseWheelEvent(wxMouseEvent &evt)
 
     if (zoom != m_zoom) {
         m_zoom = zoom;
+        SetCursor(m_zoom > 1.0 ? wxCursor(wxCURSOR_HAND) : wxNullCursor); // drag to move the zoomed picture
         Refresh();
     }
 }
@@ -246,10 +269,16 @@ void wxMediaCtrl3::paintEvent(wxPaintEvent &evt)
         const double effective_scale = scale * m_zoom;
         dc.SetUserScale(effective_scale, effective_scale);
 
+        // Keep the pan inside the picture: at most half the part of the video that does not fit in the view.
+        const double max_x = std::max(0.0, (size2.x - size.x / effective_scale) / 2.0);
+        const double max_y = std::max(0.0, (size2.y - size.y / effective_scale) / 2.0);
+        m_pan_x            = std::clamp(m_pan_x, -max_x, max_x);
+        m_pan_y            = std::clamp(m_pan_y, -max_y, max_y);
+        m_view_scale       = effective_scale;
         const int offset_x =
-            wxRound(size.x / 2.0 / effective_scale - size2.x / 2.0);
+            wxRound(size.x / 2.0 / effective_scale - size2.x / 2.0 + m_pan_x);
         const int offset_y =
-            wxRound(size.y / 2.0 / effective_scale - size2.y / 2.0);
+            wxRound(size.y / 2.0 / effective_scale - size2.y / 2.0 + m_pan_y);
 
         dc.DrawBitmap(current_frame, offset_x, offset_y);
     }

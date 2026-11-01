@@ -96,6 +96,7 @@ protected:
     void DrawLiveviewLogo(wxGraphicsContext *gc, double bg_x, double bg_y, double bg_w, double bg_h);
 
     void mouseWheelEvent(wxMouseEvent &evt);
+    void mouseDragEvent(wxMouseEvent &evt);
 
     wxSize DoGetBestSize() const override;
 
@@ -127,6 +128,9 @@ private:
     PlayFrame m_frame;
     bool m_frame_is_default_bg = false; // whether m_frame currently holds the default background (guarded by m_ui_mutex)
     double m_zoom = 1.0;   // digital zoom factor for the live view (mouse wheel)
+    double m_pan_x = 0., m_pan_y = 0.; // zoomed view offset from centre, in video pixels (left-drag)
+    double m_view_scale = 1.; // video pixel -> window pixel at the last paint
+    wxPoint m_drag_from;
     std::shared_ptr<wxURI> m_url;
     std::atomic<Bambu_Tunnel> m_tunnel{nullptr};
     std::mutex m_mutex;
