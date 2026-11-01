@@ -29,7 +29,8 @@ bool& get_helio_pre_select_optimization_flag();
 
 std::string thermal_calibration_key(const std::string& filament_type)
 {
-    const auto* model = wxGetApp().preset_bundle->full_config().option<ConfigOptionString>("printer_model");
+    const DynamicPrintConfig cfg   = wxGetApp().preset_bundle->full_config(); // full_config() returns a copy; keep it alive
+    const auto*              model = cfg.option<ConfigOptionString>("printer_model");
     return "cooling_" + boost::to_upper_copy(filament_type) + "@" + (model != nullptr ? model->value : std::string());
 }
 
