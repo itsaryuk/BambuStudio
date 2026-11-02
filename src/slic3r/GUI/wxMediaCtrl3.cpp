@@ -280,7 +280,12 @@ void wxMediaCtrl3::paintEvent(wxPaintEvent &evt)
         const int offset_y =
             wxRound(size.y / 2.0 / effective_scale - size2.y / 2.0 + m_pan_y);
 
-        dc.DrawBitmap(current_frame, offset_x, offset_y);
+        // One image-to-bitmap conversion per video frame, not per paint.
+        if (!current_frame.IsSameAs(m_paint_src)) {
+            m_paint_bmp = wxBitmap(current_frame);
+            m_paint_src = current_frame;
+        }
+        dc.DrawBitmap(m_paint_bmp, offset_x, offset_y);
     }
 
     // Draw watermark overlay when showing device preview image
@@ -819,8 +824,9 @@ void wxMediaCtrl3::GetFrameThread(int frame_rate)
 void wxMediaCtrl3::OnRenderTimer(wxTimerEvent &evt)
 {
     if (m_need_refresh.load() == true) {
+        // No Update(): let the paint come with the next event loop pass instead of
+        // forcing a synchronous one on every frame.
         Refresh(false);
-        Update();
         m_need_refresh.store(false);
     }
 }

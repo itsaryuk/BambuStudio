@@ -111,13 +111,8 @@ bool AVVideoDecoder::toWxImage(wxImage &image, wxSize const &size2)
     if (!size1.IsFullySpecified())
         size1 = {frame_->width, frame_->height };
     auto size = size1;
-    if (size.GetWidth() & 0x0f) {
+    if (size.GetWidth() & 0x0f)
         size.SetWidth((size.GetWidth() & ~0x0f) + 0x10);
-        if (size.GetWidth() != width_) {
-            std::fill(bits_.begin(), bits_.end(), 0);
-            width_ = size.GetWidth();
-        }
-    }
     AVPixelFormat wxFmt = AV_PIX_FMT_RGB24;
     sws_ctx_   = sws_getCachedContext(sws_ctx_,
                                     frame_->width, frame_->height, AVPixelFormat(frame_->format),
@@ -125,21 +120,17 @@ bool AVVideoDecoder::toWxImage(wxImage &image, wxSize const &size2)
                                     nullptr, nullptr, nullptr);
     if (sws_ctx_ == nullptr)
         return false;
-    int length = size.GetWidth() * size.GetHeight() * 3;
-    if (bits_.size() < length)
-        bits_.resize(length);
-    uint8_t * datas[]   = { bits_.data() };
-    int      strides[] = { size.GetWidth() * 3 };
-    int      result_h = sws_scale(sws_ctx_, frame_->data, frame_->linesize, 0, frame_->height, datas, strides);
-    if (result_h != size.GetHeight()) {
-        return false;
-    }
-    image = wxImage(size.GetWidth(), size.GetHeight(), bits_.data(), true);
+    // Each frame gets its own pixels: the frame buffer queues several images, and one
+    // shared buffer would be overwritten by the next decode while the UI draws it.
+    image = wxImage(size.GetWidth(), size.GetHeight(), true);
     if (!image.IsOk()) {
         fprintf(stderr, "AVVideoDecoder: image not ok %dx%d\n", size.GetWidth(), size.GetHeight());
         return false;
     }
-    return true;
+    uint8_t * datas[]   = { image.GetData() };
+    int      strides[] = { size.GetWidth() * 3 };
+    int      result_h = sws_scale(sws_ctx_, frame_->data, frame_->linesize, 0, frame_->height, datas, strides);
+    return result_h == size.GetHeight();
 }
 
 bool AVVideoDecoder::toWxBitmap(wxBitmap &bitmap, wxSize const &size2)

@@ -126,6 +126,8 @@ private:
     wxSize m_video_size = wxDefaultSize;
     wxSize m_frame_size = wxDefaultSize;
     PlayFrame m_frame;
+    PlayFrame m_paint_src; // UI thread only: the frame m_paint_bmp was made from
+    wxBitmap  m_paint_bmp;
     bool m_frame_is_default_bg = false; // whether m_frame currently holds the default background (guarded by m_ui_mutex)
     double m_zoom = 1.0;   // digital zoom factor for the live view (mouse wheel)
     double m_pan_x = 0., m_pan_y = 0.; // zoomed view offset from centre, in video pixels (left-drag)
