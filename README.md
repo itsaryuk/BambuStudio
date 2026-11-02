@@ -6,17 +6,39 @@ A fork of Bambu Studio (based on the 2.8.3 beta) with a built-in thermal simulat
 ## What is different from the original
 
 ### Thermal Optimization (new)
-A thermometer button in the top bar, available once a plate is sliced.
+A thermometer button in the top bar opens one dialog with Analyze, Optimize and Calibrate. Analyze and Optimize unlock once the plate is sliced.
 - **Analyze** simulates how warm each layer still is when the next one lands and rates every toolpath from cold (-1) to hot (+1). The result shows up as the Thermal Index colour schemes in the preview, with an outcome, the direction of the problem (overcooling or overheating), per-layer caveats and concrete suggestions.
-- **Optimize** rescales layer speeds so every layer lands inside the material's comfort window, within your limits (speed-up, slow-down, volumetric cap, keep outer walls). Layer 0 and quality-sensitive roles are left alone. M73 progress lines are recomputed, so the printer's time estimate stays right.
+- **Optimize** rescales layer speeds so every layer lands just under the hot edge of the material's comfort window, within your limits (speed-up, slow-down, volumetric cap, keep outer walls). Cool layers speed up to the flow cap (up to 3x by default) and are never slowed; hot layers may go below the filament's minimum speed, down to the slow-down limit (50 % by default). Layer 0 and quality-sensitive roles are left alone. M73 progress lines are recomputed, so the printer's time estimate stays right.
+- **Cooling pauses and cooling tower** for layers that stay hot even at the slowest speed: Optimize can park the head clear of the part for the seconds the model asks for (capped per layer, 15 s by default), and Analyze can add a hollow cooling tower beside the parts so small layers gain time without pausing.
 - **Material aware**: one model per filament slot from the filament presets (PLA, PETG, ABS, ASA, PC, PA, PAHT, PPA, PPS, PP, PE, TPU, PVA, PEEK, PEI and their CF/GF variants), with the preset's vitrification temperature, maximum volumetric speed and slow-down minimum speed. Multi-material plates rate each toolpath against its own material. Warp-prone materials get layer-time and enclosure advice instead of fan advice.
 - **Environment aware**: bed temperature, heated chamber (only on printers with chamber control, as the slicer itself does), a passive chamber estimate for enclosed printers without control, exhaust fan, part and auxiliary fans, layer height, and lateral heat conduction between neighbouring lines.
 - **Self-calibrating**: the cooling constant is solved from each preset's slow-down layer time and maximum fan, so third-party presets calibrate themselves.
-- **Calibration tower**: Calibration menu → Thermal tower prints a cone that runs hot towards the tip. Measure the height where the surface turns rough, enter it in Calibrate mode, and the comfort window for that filament type is stored and used from then on. An illustrated guide explains how to read and measure the print.
+- **Calibration tower**: Calibrate walks through three steps: print a cone that runs hot towards the tip, read it with the illustrated guide, enter the height where the surface turns rough. The result is stored per filament type and printer model (printers differ in airflow), and the dialog warns when a calibration came from another printer or a very different layer height.
 - Ships with its own test target (`thermal_quality_tests`).
 
 ### Settings Advisor (new)
 A magic-wand button next to Orient. Say what the print is for (functional, visual, fast draft) and it analyzes the plate in the background: bed contact, flat tops, overhang and unsupported areas, thin walls, measured from the mesh and from pre-sliced layer outlines. It then suggests walls, infill, shells, layer height, supports, brim, Arachne, monotonic top, seam and ironing settings, each with a short reason. Apply all or only the checked rows, as one undo step. Settings that differ per object become object overrides.
+
+### Arrange: dense packing (new)
+"Arrange objects on current plate" fits far more onto the plate. It packs each part's real footprint instead of its convex hull, so parts nest into each other's corners and small parts go inside openings. With "Auto rotate for arrangement" (now on by default) parts turn 90°, 180° or 270° or to their tightest angle. It tries a dozen packing orders and keeps the one that fits the most; when everything fits the pile stays close to square and centred, clear of the prime tower and excluded areas. In tests on a 256 mm bed: 16 → 24 L-shapes, 15 → 27 triangles, 27 → 36 T-shapes. By-object printing and "Arrange all" keep the old engine, which now turns in quarter turns instead of 45° diagonals. Test target: `arrange_dense_tests`.
+
+### Purge reduction (new)
+- The filament order of all layers is planned together (minimum total flush over the whole print, not one layer at a time).
+- Flush into infill turns on automatically where it cannot show: enough walls and shells, same material, no translucent filament, flushed colour not much darker than the walls (option "Automatic flush into infill").
+- Measured purge data can lower the colour-based flush estimate, not only raise it.
+- After a big purge the prime tower primes less (up to 15 mm³).
+- Measured on real plates: 1.4–2 g and about 2.5 minutes less on a small three-colour plate, 9–10 % less filament on five-colour towers. Test target: `purge_order_tests`.
+
+### Preview: section view (new)
+Tick "Section view" at the bottom of the legend to cut the toolpaths with a movable plane (rotation, tilt, offset) and look inside the print.
+
+### Presets and printing
+- Copy a user filament or process preset to other printers: your changes are laid over the matching system preset of each chosen printer, so the copy keeps that printer's nozzle and speed values.
+- Send print job: hovering a filament shows the flow dynamics profile and K value the printer holds for that slot, and a line explains what Auto, On and Off calibration do with the selected profiles.
+
+### Camera view
+- Dragging moves the zoomed live view (the original zooms with the wheel but could only zoom on the centre).
+- Each video frame has its own memory (frames could be overwritten while drawn), it is converted for drawing once per frame, and repaints are no longer forced synchronously.
 
 ### Splash screen
 Says ON STEROIDS, with a rotating quip.
