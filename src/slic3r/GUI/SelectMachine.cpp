@@ -1,4 +1,5 @@
 #include "SelectMachine.hpp"
+#include "PrintQueue.hpp"
 #include "I18N.hpp"
 
 #include "libslic3r/Utils.hpp"
@@ -827,8 +828,19 @@ SelectMachineDialog::SelectMachineDialog(Plater *plater)
     m_button_ensure->SetCornerRadius(FromDIP(4));
     m_button_ensure->Bind(wxEVT_BUTTON, &SelectMachineDialog::on_ok_btn, this);
 
+    // Print queue: same checks and options as Send, but the job waits for the printer
+    m_button_queue = new Button(m_panel_prepare, _L("Add to Queue"));
+    m_button_queue->SetMinSize(SELECT_MACHINE_DIALOG_BUTTON_SIZE2);
+    m_button_queue->SetCornerRadius(FromDIP(4));
+    m_button_queue->SetToolTip(_L("Send this plate later: when the printer is free and you confirm the plate is clear, or at a chosen time"));
+    m_button_queue->Bind(wxEVT_BUTTON, &SelectMachineDialog::on_queue_btn, this);
+    m_button_queue->Disable();
+
+    auto *send_buttons = new wxBoxSizer(wxHORIZONTAL);
+    send_buttons->Add(m_button_queue, 0, wxALIGN_CENTER | wxRIGHT, FromDIP(8));
+    send_buttons->Add(m_button_ensure, 0, wxALIGN_CENTER, 0);
     m_sizer_pcont->Add(0, 0, 1, wxEXPAND, 0);
-    m_sizer_pcont->Add(m_button_ensure, 0,wxALIGN_CENTER, 0);
+    m_sizer_pcont->Add(send_buttons, 0,wxALIGN_CENTER, 0);
 
     m_sizer_prepare->Add(0, 0, 1, wxTOP, FromDIP(12));
     m_sizer_prepare->Add(m_sizer_pcont, 0, wxALIGN_CENTER, 0);
@@ -2252,6 +2264,18 @@ static std::vector<SpoolSlotUse> plate_slot_uses(const std::vector<FilamentInfo>
     return uses;
 }
 
+void SelectMachineDialog::on_queue_btn(wxCommandEvent &event)
+{
+    DeviceManager *dev = wxGetApp().getDeviceManager();
+    MachineObject *obj = dev ? dev->get_selected_machine() : nullptr;
+    if (!obj || !wxGetApp().print_queue()) return;
+    if (!PrintQueueRunner::ask_start(this, !obj->is_in_printing() && !obj->is_in_upgrading(), m_queue_run_at, m_queue_cleared))
+        return;
+    m_queue_next = true;
+    on_ok_btn(event); // the same checks as Send; on_send_print queues instead of sending
+    m_queue_next = false;
+}
+
 void SelectMachineDialog::on_ok_btn(wxCommandEvent &event)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": on_ok_btn";
@@ -3310,7 +3334,12 @@ void SelectMachineDialog::on_send_print()
 
     // Spool inventory: remember what this job takes from which slot; the grams come off
     // the spools when the printer reports the print finished (or the share, if cancelled).
-    if (auto *usage = wxGetApp().spool_usage(); usage && m_print_type == PrintFromType::FROM_NORMAL) {
+    const bool to_queue = m_queue_next && m_print_type == PrintFromType::FROM_NORMAL;
+    nlohmann::json queued_uses = nlohmann::json::array();
+    if (to_queue)
+        for (const SpoolSlotUse &u : plate_slot_uses(m_ams_mapping_result, m_plater))
+            queued_uses.push_back({{"ams_id", u.ams_id}, {"slot_id", u.slot_id}, {"grams", u.grams}});
+    if (auto *usage = wxGetApp().spool_usage(); usage && !to_queue && m_print_type == PrintFromType::FROM_NORMAL) {
         SpoolPendingJob job;
         job.dev_id  = obj_->get_dev_id();
         job.name    = m_current_project_name.utf8_string();
@@ -3480,6 +3509,15 @@ void SelectMachineDialog::on_send_print()
     if (agent) {
         std::string dev_ota_str = "dev_ota_ver:" + obj_->get_dev_id();
         agent->track_update_property(dev_ota_str, obj_->get_ota_version());
+    }
+
+    if (to_queue) {
+        wxGetApp().print_queue()->add(*m_print_job, m_plater, m_print_plate_idx, obj_->get_dev_name(), std::move(queued_uses),
+                                      m_queue_run_at, m_queue_cleared);
+        m_print_job.reset();
+        prepare_mode();
+        EndModal(wxID_OK);
+        return;
     }
 
     m_print_job->start();
@@ -4531,6 +4569,10 @@ void SelectMachineDialog::Enable_Refresh_Button(bool en)
 
 void SelectMachineDialog::Enable_Send_Button(bool en)
 {
+    // a busy printer can still take queued jobs
+    if (m_button_queue)
+        m_button_queue->Enable(m_print_type == PrintFromType::FROM_NORMAL && !m_is_in_sending_mode &&
+                               (en || m_print_status == PrintDialogStatus::PrintStatusInPrinting));
     if (!en) {
         if (m_button_ensure->IsEnabled()) {
             m_button_ensure->Disable();

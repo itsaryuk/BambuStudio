@@ -18,6 +18,7 @@ get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 add_executable(${_TEST_NAME}_tests
     ${_TEST_NAME}_tests_main.cpp
     test_spool_usage.cpp
+    test_print_queue.cpp
 )
 
 target_include_directories(${_TEST_NAME}_tests PRIVATE

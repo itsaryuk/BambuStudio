@@ -56,6 +56,7 @@ protected:
 public:
     PrintJob(std::shared_ptr<ProgressIndicator> pri, Plater *plater, std::string dev_id = "");
     virtual bool is_print_job() const override { return true; }
+    const std::string &get_dev_id() const { return m_dev_id; }
 
     std::string m_project_name;
     std::string m_dev_ip;

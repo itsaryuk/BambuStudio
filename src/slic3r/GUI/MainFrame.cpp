@@ -1,4 +1,5 @@
 #include "MainFrame.hpp"
+#include "PrintQueue.hpp"
 #include "GLToolbar.hpp"
 #include <wx/panel.h>
 #include <wx/notebook.h>
@@ -3391,6 +3392,8 @@ void MainFrame::init_menubar_as_editor()
             camera_fullscreen_item->SetItemLabel(active ? _L("Exit Camera Full Screen") : _L("Enter Camera Full Screen"));
             evt.Enable(can_toggle_camera_fullscreen());
         }, camera_fullscreen_item->GetId());
+        append_menu_item(viewMenu, wxID_ANY, _L("Print Queue") + dots, _L("Show the prints waiting for their printer"),
+            [this](wxCommandEvent &) { PrintQueueRunner::show_dialog(this); }, "", nullptr);
         viewMenu->AppendSeparator();
 
         //BBS perspective view

@@ -94,6 +94,7 @@ class ObjectLayers;
 class Plater;
 class ParamsPanel;
 class NotificationManager;
+class PrintQueueRunner;
 struct GUI_InitParams;
 class ParamsDialog;
 class HMSQueryMgr;
@@ -345,6 +346,7 @@ private:
     wgtFilaManagerStore*            m_fila_manager_store        { nullptr };
     wgtFilaManagerSync*             m_fila_manager_sync         { nullptr };
     wgtSpoolUsage*                  m_spool_usage               { nullptr };
+    PrintQueueRunner*               m_print_queue               { nullptr };
     wgtFilaManagerCloudClient*      m_fila_manager_cloud_client { nullptr };
     wgtFilaManagerCloudSync*        m_fila_manager_cloud_sync   { nullptr };
     wgtFilaManagerCloudDispatcher*  m_fila_manager_cloud_disp   { nullptr };
@@ -410,6 +412,7 @@ public:
     wgtFilaManagerStore*            fila_manager_store()        { return m_fila_manager_store; }
     wgtFilaManagerSync*             fila_manager_sync()         { return m_fila_manager_sync; }
     wgtSpoolUsage*                  spool_usage()               { return m_spool_usage; }
+    PrintQueueRunner*               print_queue()               { return m_print_queue; }
     // Feeds a printer's status to the spool usage tracker (every printer, every update).
     void                            update_spool_usage(MachineObject *obj);
     wgtFilaManagerCloudClient*      fila_manager_cloud_client() { return m_fila_manager_cloud_client; }

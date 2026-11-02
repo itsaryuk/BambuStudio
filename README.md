@@ -35,6 +35,9 @@ Tick "Section view" at the bottom of the legend to cut the toolpaths with a mova
 ### Duplicate plate (new)
 Plate menu → Duplicate Plate adds a copy right after the plate: every object on it (positions, rotations, per-object settings, painted colours) and the plate's own settings (plate type, print sequence, filament order, name).
 
+### Print queue (new)
+"Add to Queue" in the send dialog (usable while the printer is busy) keeps the sliced plate and every send option. Each printer prints its queue in order: when it is free, a notification asks you to clear the plate, and one click sends the next job. A job can also wait for a start time; confirm the plate is clear beforehand and it starts unattended. View → Print Queue lists, reorders and removes jobs. Bambu Studio has to be running.
+
 ### Spool inventory (new)
 The Filament Manager keeps its spools on your computer (`filament_inventory/spools.json`), with or without a Bambu account. When a print sent from the app finishes, the grams it used come off the spool in each AMS slot; a cancelled or failed print takes the share printed so far. Spools with a Bambu RFID tag are left to the printer's own reading. The send dialog warns when an untagged spool holds less than the print needs. Prints started from the printer screen or another app are not counted.
 

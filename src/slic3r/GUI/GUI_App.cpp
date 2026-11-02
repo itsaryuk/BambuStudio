@@ -1,5 +1,6 @@
 #include "libslic3r/Technologies.hpp"
 #include "GUI_App.hpp"
+#include "PrintQueue.hpp"
 #include "BindDialog.hpp"
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
@@ -2997,6 +2998,8 @@ int GUI_App::OnExit()
     }
     delete m_spool_usage;
     m_spool_usage = nullptr;
+    delete m_print_queue;
+    m_print_queue = nullptr;
 
     if (m_fila_manager_store) {
         delete m_fila_manager_store;
@@ -3666,6 +3669,8 @@ bool GUI_App::on_init_inner()
 
     BOOST_LOG_TRIVIAL(info) << "create the main window";
     mainframe = new MainFrame();
+    if (is_editor() && !m_print_queue)
+        m_print_queue = new PrintQueueRunner((boost::filesystem::path(data_dir()) / "print_queue").string());
     // hide settings tabs after first Layout
     if (is_editor()) {
         mainframe->select_tab(size_t(0));

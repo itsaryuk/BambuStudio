@@ -13,7 +13,7 @@ Upstream: [#2386](https://github.com/bambulab/BambuStudio/issues/2386), [#1186](
 
 Done when a print sent from the app lowers the right spools by the sliced grams, and a print that needs more than a spool holds is flagged in the send dialog.
 
-## 2. Print queue and scheduled start
+## 2. Print queue and scheduled start (built, not yet checked on a real printer)
 Upstream: [#2485](https://github.com/bambulab/BambuStudio/issues/2485), [#994](https://github.com/bambulab/BambuStudio/issues/994).
 
 - Queue sliced plates per printer, with the send options (AMS mapping, bed levelling, timelapse) saved per job.

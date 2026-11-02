@@ -381,6 +381,10 @@ protected:
     wxBoxSizer*                         m_change_filament_times_sizer{ nullptr };
     wxBoxSizer*                         m_warn_when_drying_sizer{ nullptr };
     Button*                             m_button_ensure{ nullptr };
+    Button*                             m_button_queue{ nullptr };
+    bool                                m_queue_next{ false };   // the next send goes to the print queue
+    long long                           m_queue_run_at{ 0 };
+    bool                                m_queue_cleared{ false };
     wxStaticBitmap *                    m_rename_button{nullptr};
     wxStaticBitmap*                     m_staticbitmap{ nullptr };
     wxStaticBitmap*                     m_bitmap_last_plate{ nullptr };
@@ -521,6 +525,7 @@ public:
     void on_cancel(wxCloseEvent& event);
     void show_errors(wxString& info);
     void on_ok_btn(wxCommandEvent& event);
+    void on_queue_btn(wxCommandEvent& event);
     void on_reselect_dialog_btn_clicked(wxMouseEvent&);
     void Enable_Auto_Refill(bool enable);
     void on_send_print();
