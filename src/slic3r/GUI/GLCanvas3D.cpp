@@ -1385,8 +1385,8 @@ void GLCanvas3D::load_arrange_settings()
     if (!dist_sla_str.empty())
         m_arrange_settings_sla.distance = std::stof(dist_sla_str);
 
-    if (!en_rot_fff_str.empty())
-        m_arrange_settings_fff.enable_rotation = (en_rot_fff_str == "1" || en_rot_fff_str == "yes");
+    // Rotating (and flipping) is on unless turned off: it's how the packer fits more.
+    m_arrange_settings_fff.enable_rotation = en_rot_fff_str.empty() || en_rot_fff_str == "1" || en_rot_fff_str == "yes";
 
     if (!en_rot_fff_seqp_str.empty())
         m_arrange_settings_fff_seq_print.enable_rotation = (en_rot_fff_seqp_str == "1" || en_rot_fff_seqp_str == "yes");
@@ -7549,6 +7549,7 @@ bool GLCanvas3D::_render_arrange_menu(float left, float toolbar_height)
         settings_out.reset();
         //BBS: add specific arrange settings
         if (seq_print) settings_out.is_seq_print = true;
+        else settings_out.enable_rotation = true;
 
         if (auto printer_structure_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure")) {
             settings_out.align_to_y_axis = (printer_structure_opt->value == PrinterStructure::psI3);

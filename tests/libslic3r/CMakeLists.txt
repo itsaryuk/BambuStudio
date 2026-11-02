@@ -65,3 +65,8 @@ add_executable(purge_order_tests ${_TEST_NAME}_tests.cpp test_purge_order.cpp)
 target_link_libraries(purge_order_tests test_common libslic3r libslic3r_gui)
 set_property(TARGET purge_order_tests PROPERTY FOLDER "tests")
 add_test(purge_order_tests purge_order_tests ${CATCH_EXTRA_ARGS})
+
+add_executable(arrange_dense_tests ${_TEST_NAME}_tests.cpp test_arrange_dense.cpp)
+target_link_libraries(arrange_dense_tests test_common libslic3r libslic3r_gui)
+set_property(TARGET arrange_dense_tests PROPERTY FOLDER "tests")
+add_test(arrange_dense_tests arrange_dense_tests ${CATCH_EXTRA_ARGS})

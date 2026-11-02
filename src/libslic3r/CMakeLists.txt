@@ -271,6 +271,8 @@ set(lisbslic3r_sources
     CustomGCode.hpp
     Arrange.hpp
     Arrange.cpp
+    ArrangeDense.hpp
+    ArrangeDense.cpp
     NormalUtils.cpp
     NormalUtils.hpp
     ObjColorUtils.cpp

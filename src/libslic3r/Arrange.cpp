@@ -205,9 +205,9 @@ void fill_config(PConf& pcfg, const ArrangeParams &params) {
         pcfg.alignment = PConf::Alignment::DONT_ALIGN;
 
 
-    // Try 4 angles (45 degree step) and find the one with min cost
+    // Try the quarter turns, including the 180 degree flip
     if (params.allow_rotations)
-        pcfg.rotations = {0., PI / 4., PI/2, 3. * PI / 4. };
+        pcfg.rotations = {0., PI / 2., PI, 3. * PI / 2.};
     else
         pcfg.rotations = {0.};
 
@@ -942,10 +942,11 @@ void _arrange(
                 auto angle = min_area_boundingbox_rotation(itm.transformedShape());
                 BOOST_LOG_TRIVIAL(debug) << itm.name << " min_area_boundingbox_rotation=" << angle << ", original angle=" << itm.rotation();
 
+                // quarter turns, including the 180 degree flip; no diagonals
                 if (fabs(angle) < EPSILON) {
-                    allowed_angles = {0., PI * 0.25, PI * 0.5, PI * 0.75};
+                    allowed_angles = {0., PI * 0.5, PI, PI * 1.5};
                 } else {
-                    allowed_angles = {0., angle, angle + PI * 0.25, angle + PI * 0.5, angle + PI * 0.75};
+                    allowed_angles = {0., PI * 0.5, PI, PI * 1.5, angle, angle + PI * 0.5, angle + PI, angle + PI * 1.5};
                 }
 
                 // Fall back to the min-area-bbox rescue angle only if every

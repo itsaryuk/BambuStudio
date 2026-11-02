@@ -47,6 +47,7 @@ static const constexpr int UNARRANGED = -1;
 /// Zero is the physical bed, larger than zero means a virtual bed.
 struct ArrangePolygon {
     ExPolygon poly;                 /// The 2D silhouette to be arranged
+    ExPolygons outline;             /// Real footprint for arrange_dense() (same frame as poly), convex hull when empty
     Vec2crd   translation{0, 0};    /// The translation of the poly
     double    rotation{0.0};        /// The rotation of the poly in radians
     coord_t   inflation = 0;        /// Arrange with inflated polygon

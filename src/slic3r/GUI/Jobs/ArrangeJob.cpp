@@ -3,6 +3,7 @@
 #include "libslic3r/SVG.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/ModelArrange.hpp"
+#include "libslic3r/ArrangeDense.hpp"
 #include "libslic3r/VectorFormatter.hpp"
 
 #include "slic3r/GUI/PartPlate.hpp"
@@ -601,6 +602,8 @@ void ArrangeJob::prepare_partplate() {
     }
 
     Model& model = m_plater->model();
+    // Real footprints for the dense packer, one projection per object and orientation.
+    std::map<std::pair<const ModelObject*, std::string>, ExPolygons> outlines;
 
     // Go through the objects and check if inside the selection
     for (size_t oidx = 0; oidx < model.objects.size(); ++oidx)
@@ -615,6 +618,14 @@ void ArrangeJob::prepare_partplate() {
             bool locked = plate_list.preprocess_arrange_polygon_other_locked(oidx, inst_idx, ap, in_plate);
             if (!locked && in_plate)
             {
+                if (!params.is_seq_print && mo->instances[inst_idx]->printable) {
+                    const Matrix3d lin = mo->instances[inst_idx]->get_matrix().linear();
+                    auto key = std::make_pair((const ModelObject*)mo, std::string((const char*)lin.data(), sizeof(double) * 9));
+                    auto it  = outlines.find(key);
+                    if (it == outlines.end())
+                        it = outlines.emplace(key, arrangement::instance_outline(*mo->instances[inst_idx])).first;
+                    ap.outline = it->second;
+                }
                 ap.itemid = cont.size();
                 cont.emplace_back(std::move(ap));
             }
@@ -926,7 +937,12 @@ void ArrangeJob::process()
                                      << unscale<double>(item.translation(Y));
     }
 
-    arrangement::arrange(m_selected, m_unselected, bedpts, params);
+    // The current plate gets the dense packer (real outlines, flips); by-object printing
+    // keeps the old arrange, which knows about extruder clearance and print order.
+    if (only_on_partplate && !params.is_seq_print)
+        arrangement::arrange_dense(m_selected, m_unselected, bedpts, params);
+    else
+        arrangement::arrange(m_selected, m_unselected, bedpts, params);
 
     // sort by item id
     std::sort(m_selected.begin(), m_selected.end(), [](auto a, auto b) {return a.itemid < b.itemid; });
