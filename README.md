@@ -32,6 +32,12 @@ A magic-wand button next to Orient. Say what the print is for (functional, visua
 ### Preview: section view (new)
 Tick "Section view" at the bottom of the legend to cut the toolpaths with a movable plane (rotation, tilt, offset) and look inside the print.
 
+### Duplicate plate (new)
+Plate menu → Duplicate Plate adds a copy right after the plate: every object on it (positions, rotations, per-object settings, painted colours) and the plate's own settings (plate type, print sequence, filament order, name).
+
+### Spool inventory (new)
+The Filament Manager keeps its spools on your computer (`filament_inventory/spools.json`), with or without a Bambu account. When a print sent from the app finishes, the grams it used come off the spool in each AMS slot; a cancelled or failed print takes the share printed so far. Spools with a Bambu RFID tag are left to the printer's own reading. The send dialog warns when an untagged spool holds less than the print needs. Prints started from the printer screen or another app are not counted.
+
 ### Presets and printing
 - Copy a user filament or process preset to other printers: your changes are laid over the matching system preset of each chosen printer, so the copy keeps that printer's nozzle and speed values.
 - Send print job: hovering a filament shows the flow dynamics profile and K value the printer holds for that slot, and a line explains what Auto, On and Off calibration do with the selected profiles.

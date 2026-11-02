@@ -2,7 +2,7 @@
 
 Planned features for BambuStudio ON STEROIDS, picked from the most-requested upstream issues that the slicer itself can solve (no firmware or cloud changes).
 
-## 1. Spool inventory
+## 1. Spool inventory (built, not yet checked on a real print)
 Upstream: [#2386](https://github.com/bambulab/BambuStudio/issues/2386), [#1186](https://github.com/bambulab/BambuStudio/issues/1186).
 
 - Keep a local list of spools: filament preset, colour, net weight, empty-spool weight, grams left.
@@ -23,7 +23,7 @@ Upstream: [#2485](https://github.com/bambulab/BambuStudio/issues/2485), [#994](h
 
 Done when two queued plates print one after the other with one confirmation in between, and a scheduled job starts at its time.
 
-## 3. Duplicate plate
+## 3. Duplicate plate (built, G-code comparison pending)
 Upstream: [#1595](https://github.com/bambulab/BambuStudio/issues/1595).
 
 - Plate menu → Duplicate: a new plate right after it with copies of every object (same positions, rotations, per-object settings and painted colours) and the plate's own settings (plate type, print sequence, filament order, name).
