@@ -1638,6 +1638,10 @@ void MenuFactory::create_plate_menu()
         },
         "", nullptr, []() { return true; }, m_parent);
 
+    append_menu_item(menu, wxID_ANY, _L("Duplicate Plate"), _L("Copy this plate with its objects and settings into a new plate after it"),
+        [get_plate_idx](wxCommandEvent&) { plater()->duplicate_plate(get_plate_idx()); }, "", nullptr,
+        []() { return plater()->can_duplicate_plate() && !plater()->is_background_process_slicing(); }, m_parent);
+
     // delete current plate
 #ifdef __WINDOWS__
     append_menu_item(menu, wxID_ANY, _L("Delete Plate"), _L("Remove the selected plate"),

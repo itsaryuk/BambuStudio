@@ -823,6 +823,10 @@ public:
     int select_plate_by_hover_id(int hover_id, bool right_click = false, bool isModidyPlateName = false, bool is_swap_plate = false);
     //BBS: delete the plate, index= -1 means the current plate
     int delete_plate(int plate_index = -1);
+    // Copies a plate (objects with their settings and paint, plate settings, wipe tower
+    // position) into a new plate right after it. -1 = the current plate.
+    int duplicate_plate(int plate_index = -1);
+    bool can_duplicate_plate() const;
     //BBS: select the sliced plate by index
     int select_sliced_plate(int plate_index);
     //BBS: set bed positions

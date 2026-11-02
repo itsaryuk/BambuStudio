@@ -27406,6 +27406,82 @@ int Plater::delete_plate(int plate_index)
     return ret;
 }
 
+int Plater::duplicate_plate(int plate_index)
+{
+    PartPlateList &list = p->partplate_list;
+    const int      src  = plate_index < 0 ? list.get_curr_plate_index() : plate_index;
+    if (list.get_plate(src) == nullptr || !can_duplicate_plate())
+        return -1;
+
+    take_snapshot("duplicate plate");
+    m_force_ban_check_volume_bbox_state_with_extruder_area = true;
+
+    // New empty plate, moved right after the source while it is still empty;
+    // the plates behind it shift along with their objects, as Move Plate does.
+    const int dst = src + 1;
+    const int created = list.create_plate();
+    if (created < 0) {
+        m_force_ban_check_volume_bbox_state_with_extruder_area = false;
+        return -1;
+    }
+    DynamicConfig &proj_cfg = wxGetApp().preset_bundle->project_config;
+    auto *wtx = proj_cfg.opt<ConfigOptionFloats>("wipe_tower_x");
+    auto *wty = proj_cfg.opt<ConfigOptionFloats>("wipe_tower_y");
+    if (created != dst) {
+        list.move_plate_to_index(created, dst);
+        // the per-plate wipe tower positions follow the plates
+        for (ConfigOptionFloats *wt : {wtx, wty})
+            if (wt && created < (int) wt->values.size())
+                std::rotate(wt->values.begin() + dst, wt->values.begin() + created, wt->values.begin() + created + 1);
+    }
+    for (ConfigOptionFloats *wt : {wtx, wty})
+        if (wt && dst < (int) wt->values.size())
+            wt->values[dst] = wt->values[src];
+    if (dst < (int) p->model.wipe_tower.positions.size() && src < (int) p->model.wipe_tower.positions.size())
+        p->model.wipe_tower.positions[dst] = p->model.wipe_tower.positions[src];
+
+    PartPlate *sp = list.get_plate(src), *dp = list.get_plate(dst);
+    dp->config()->apply(*sp->config());
+    dp->set_plate_name(sp->get_plate_name());
+
+    // Copy the objects: new objects (independent afterwards, like a paste) holding only
+    // the instances that are on the source plate, shifted by the plate offset.
+    const Vec3d shift(dp->get_origin().x() - sp->get_origin().x(), dp->get_origin().y() - sp->get_origin().y(), 0.);
+    std::map<int, std::vector<int>> on_plate;
+    for (const auto &[obj, inst] : sp->get_obj_and_inst_set())
+        on_plate[obj].push_back(inst);
+    std::vector<size_t> new_objects;
+    for (const auto &[obj, insts] : on_plate) {
+        const ModelObject *src_obj = p->model.objects[obj];
+        ModelObject       *dst_obj = p->model.add_object(*src_obj);
+        for (ModelVolume *mv : dst_obj->volumes)
+            if (mv->is_model_part()) mv->ensure_part_guid(true);
+        dst_obj->clear_instances();
+        for (int i : insts) {
+            ModelInstance *mi = dst_obj->add_instance(*src_obj->instances[i]);
+            mi->set_offset(src_obj->instances[i]->get_offset() + shift);
+        }
+        p->model.set_assembly_pos(dst_obj);
+        new_objects.push_back(p->model.objects.size() - 1);
+    }
+    if (!new_objects.empty())
+        p->sidebar->obj_list()->paste_objects_into_list(new_objects);
+
+    p->partplate_list.update_slice_context_to_current_plate(p->background_process);
+    p->preview->update_gcode_result(p->partplate_list.get_current_slice_result());
+    p->sidebar->obj_list()->reload_all_plates();
+    p->partplate_list.update_plates();
+    update();
+    m_force_ban_check_volume_bbox_state_with_extruder_area = false;
+    select_plate(dst);
+    return dst;
+}
+
+bool Plater::can_duplicate_plate() const
+{
+    return p->partplate_list.get_plate_count() < (int) PartPlateList::MAX_PLATES_COUNT;
+}
+
 //BBS: set bed positions
 void Plater::set_bed_position(Vec2d& pos)
 {
