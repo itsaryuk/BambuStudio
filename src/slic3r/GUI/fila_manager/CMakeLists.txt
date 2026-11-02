@@ -10,6 +10,8 @@ list(APPEND SLIC3R_GUI_SOURCES
     GUI/fila_manager/wgtFilaManagerPanel.cpp
     GUI/fila_manager/wgtFilaManagerSync.h
     GUI/fila_manager/wgtFilaManagerSync.cpp
+    GUI/fila_manager/wgtSpoolUsage.h
+    GUI/fila_manager/wgtSpoolUsage.cpp
     GUI/fila_manager/wgtFilaManagerCloudClient.h
     GUI/fila_manager/wgtFilaManagerCloudClient.cpp
     GUI/fila_manager/wgtFilaManagerCloudSync.h

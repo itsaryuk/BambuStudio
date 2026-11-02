@@ -17,6 +17,7 @@
 #include "slic3r/GUI/HMS.hpp"
 #include "slic3r/GUI/fila_manager/wgtFilaManagerStore.h"
 #include "slic3r/GUI/fila_manager/wgtFilaManagerSync.h"
+#include "slic3r/GUI/fila_manager/wgtSpoolUsage.h"
 #include "slic3r/GUI/fila_manager/wgtFilaManagerCloudClient.h"
 #include "slic3r/GUI/fila_manager/wgtFilaManagerCloudSync.h"
 #include "slic3r/GUI/fila_manager/wgtFilaManagerCloudDispatcher.h"
@@ -343,6 +344,7 @@ private:
 
     wgtFilaManagerStore*            m_fila_manager_store        { nullptr };
     wgtFilaManagerSync*             m_fila_manager_sync         { nullptr };
+    wgtSpoolUsage*                  m_spool_usage               { nullptr };
     wgtFilaManagerCloudClient*      m_fila_manager_cloud_client { nullptr };
     wgtFilaManagerCloudSync*        m_fila_manager_cloud_sync   { nullptr };
     wgtFilaManagerCloudDispatcher*  m_fila_manager_cloud_disp   { nullptr };
@@ -407,6 +409,9 @@ public:
     Slic3r::TaskManager*   getTaskManager() { return m_task_manager; }
     wgtFilaManagerStore*            fila_manager_store()        { return m_fila_manager_store; }
     wgtFilaManagerSync*             fila_manager_sync()         { return m_fila_manager_sync; }
+    wgtSpoolUsage*                  spool_usage()               { return m_spool_usage; }
+    // Feeds a printer's status to the spool usage tracker (every printer, every update).
+    void                            update_spool_usage(MachineObject *obj);
     wgtFilaManagerCloudClient*      fila_manager_cloud_client() { return m_fila_manager_cloud_client; }
     wgtFilaManagerCloudSync*        fila_manager_cloud_sync()   { return m_fila_manager_cloud_sync; }
     wgtFilaManagerCloudDispatcher*  fila_manager_cloud_disp()   { return m_fila_manager_cloud_disp; }

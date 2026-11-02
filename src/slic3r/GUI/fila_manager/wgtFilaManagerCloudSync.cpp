@@ -426,7 +426,9 @@ void wgtFilaManagerCloudSync::pull_from_cloud()
                     for (const auto& existing : m_store->spools_to_json()) {
                         const std::string existing_id = existing.value("spool_id", "");
                         if (existing_id.empty()) continue;
-                        if (cloud_ids.count(existing_id) == 0) {
+                        // Only spools that came from the cloud and are gone there are deleted;
+                        // spools added offline (never synced) stay in the local list.
+                        if (cloud_ids.count(existing_id) == 0 && existing.value("cloud_synced", false)) {
                             m_store->remove_spool(existing_id);
                             ++dropped_local_only;
                         }

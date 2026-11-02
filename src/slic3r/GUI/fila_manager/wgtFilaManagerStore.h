@@ -153,6 +153,7 @@ public:
 
     bool is_dirty() const { return m_dirty; }
     void set_dirty()      { m_dirty = true; }
+    void mark_changed()   { m_dirty = true; save(); }
     void clear_dirty()    { m_dirty = false; }
 
     nlohmann::json spools_to_json() const;

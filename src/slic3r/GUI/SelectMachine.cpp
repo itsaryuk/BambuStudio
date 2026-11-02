@@ -2228,6 +2228,30 @@ void SelectMachineDialog::on_reselect_dialog_btn_clicked(wxMouseEvent&)
     m_best_pos_dialog->ShowModal();
 }
 
+// Grams of this plate per mapped printer slot (same numbers as the remain check uses).
+static std::vector<SpoolSlotUse> plate_slot_uses(const std::vector<FilamentInfo> &mapping, Plater *plater)
+{
+    std::vector<SpoolSlotUse> uses;
+    GCodeProcessorResult     *result      = plater->background_process().get_current_gcode_result();
+    const DynamicPrintConfig  full_config = wxGetApp().preset_bundle->full_config();
+    const auto               *densities   = full_config.option<ConfigOptionFloats>("filament_density");
+    if (!result || !densities)
+        return uses;
+    const auto &volumes = result->print_statistics.total_volumes_per_extruder;
+    for (const FilamentInfo &f : mapping) {
+        auto it = volumes.find(f.id);
+        if (f.id < 0 || f.id >= (int) densities->values.size() || it == volumes.end() || f.ams_id.empty() || f.slot_id.empty())
+            continue;
+        const double g  = densities->values[f.id] * it->second / 1000.; // mm^3 -> cm^3
+        auto         at = std::find_if(uses.begin(), uses.end(), [&](const SpoolSlotUse &u) { return u.ams_id == f.ams_id && u.slot_id == f.slot_id; });
+        if (at == uses.end())
+            uses.push_back({f.ams_id, f.slot_id, g});
+        else
+            at->grams += g;
+    }
+    return uses;
+}
+
 void SelectMachineDialog::on_ok_btn(wxCommandEvent &event)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": on_ok_btn";
@@ -2334,6 +2358,22 @@ void SelectMachineDialog::on_ok_btn(wxCommandEvent &event)
                     has_slice_warnings = true;
                 }
             }
+        }
+    }
+
+    // Spool inventory: untagged spools in the Filament Manager that hold less than this print needs.
+    // (Tagged Bambu spools are covered by the printer's own remain check.)
+    if (auto *store = wxGetApp().fila_manager_store()) {
+        wxString short_list;
+        for (const SpoolSlotUse &u : plate_slot_uses(m_ams_mapping_result, m_plater)) {
+            const FilamentSpool *sp = store->find_by_slot(obj_->get_dev_id(), u.ams_id, u.slot_id);
+            if (sp && !FilamentSpool::is_valid_tag_uid(sp->tag_uid) && sp->net_weight < u.grams)
+                short_list += wxString::Format("\n%s %s: %s %.0f g, %s %.0f g", from_u8(sp->brand), from_u8(sp->material_type),
+                                               _L("needs"), u.grams, _L("left"), sp->net_weight);
+        }
+        if (!short_list.empty()) {
+            confirm_text.push_back(ConfirmBeforeSendInfo(_L("Some spools in the Filament Manager may run out during this print:") + short_list));
+            has_slice_warnings = true;
         }
     }
 
@@ -3267,6 +3307,19 @@ void SelectMachineDialog::on_send_print()
     BOOST_LOG_TRIVIAL(info) << "print_job: ams_mapping_array2 = " << ams_mapping_array2;
     BOOST_LOG_TRIVIAL(info) << "print_job: ams_mapping_info = " << ams_mapping_info;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "print_job: get_ams_mapping_result end";
+
+    // Spool inventory: remember what this job takes from which slot; the grams come off
+    // the spools when the printer reports the print finished (or the share, if cancelled).
+    if (auto *usage = wxGetApp().spool_usage(); usage && m_print_type == PrintFromType::FROM_NORMAL) {
+        SpoolPendingJob job;
+        job.dev_id  = obj_->get_dev_id();
+        job.name    = m_current_project_name.utf8_string();
+        job.plate   = m_print_plate_idx;
+        job.uses    = plate_slot_uses(m_ams_mapping_result, m_plater);
+        job.sent_at = (long long) std::time(nullptr);
+        if (!job.uses.empty())
+            usage->on_send(std::move(job));
+    }
 
     const bool is_imported_3mf = m_print_type == PrintFromType::FROM_NORMAL && m_plater->using_exported_file();
     if (is_imported_3mf) {

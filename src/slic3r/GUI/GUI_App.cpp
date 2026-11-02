@@ -1191,6 +1191,23 @@ std::string extract_model_download_url_from_mac(const std::string &protocol_url)
 }
 } // namespace
 
+void GUI_App::update_spool_usage(MachineObject *obj)
+{
+    if (!m_spool_usage || !m_fila_manager_store || !obj)
+        return;
+    const std::vector<std::string> changed = m_spool_usage->on_status(obj->get_dev_id(), obj->print_status, obj->mc_print_percent,
+                                                                     obj->subtask_name, (long long) std::time(nullptr));
+    if (changed.empty())
+        return;
+    // spools that also live in the cloud get the new weight there, or the next pull would undo it
+    if (auto *disp = fila_manager_cloud_disp())
+        for (const std::string &id : changed)
+            if (const FilamentSpool *s = m_fila_manager_store->get_spool(id); s && s->cloud_synced)
+                disp->enqueue_push_update(id, {{"net_weight", s->net_weight}, {"remain_percent", s->remain_percent}, {"status", s->status}});
+    if (mainframe && mainframe->web_device())
+        mainframe->web_device()->NotifyFilamentSessionState();
+}
+
 void GUI_App::post_init()
 {
     assert(initialized());
@@ -2379,6 +2396,7 @@ void GUI_App::init_networking_callbacks()
                     } else {
                         obj->parse_json("cloud", msg, true);
                     }
+                    update_spool_usage(obj);
                 }
 
                 if (GUI::wxGetApp().plater())
@@ -2424,6 +2442,7 @@ void GUI_App::init_networking_callbacks()
 
                 if (MachineObject* obj = m_device_manager->get_my_machine(dev_id)) {
                     obj->parse_json("lan", msg);
+                    update_spool_usage(obj);
                     if (this->m_device_manager->get_selected_machine() == obj) {
                         GUI::wxGetApp().sidebar().load_ams_list(obj);
                         // STUDIO-18155: AMS 状态变化驱动耗材同步（本地 store + 节流后云端）
@@ -2976,6 +2995,8 @@ int GUI_App::OnExit()
         delete m_fila_manager_sync;
         m_fila_manager_sync = nullptr;
     }
+    delete m_spool_usage;
+    m_spool_usage = nullptr;
 
     if (m_fila_manager_store) {
         delete m_fila_manager_store;
@@ -3614,7 +3635,13 @@ bool GUI_App::on_init_inner()
         // Initialize Filament Manager store & sync
         if (!m_fila_manager_store) {
             m_fila_manager_store = new wgtFilaManagerStore();
+            m_fila_manager_store->load();
             BOOST_LOG_TRIVIAL(info) << "Filament Manager store initialized";
+        }
+        if (!m_spool_usage) {
+            m_spool_usage = new wgtSpoolUsage(m_fila_manager_store,
+                (boost::filesystem::path(data_dir()) / "filament_inventory" / "usage.json").string());
+            m_spool_usage->load();
         }
         if (!m_fila_manager_sync) {
             m_fila_manager_sync = new wgtFilaManagerSync(m_fila_manager_store);

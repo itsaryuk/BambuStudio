@@ -326,7 +326,7 @@ bool wgtFilaManagerSync::sync_all_trays(MachineObject* obj)
     const bool mount_changed = m_store->apply_mount_diff(
         dev_id, dev_name, present_now, &mount_changed_ids, &ejected_snapshots);
 
-    if (any_changed || mount_changed) m_store->set_dirty();
+    if (any_changed || mount_changed) m_store->mark_changed();
 
     if (!changed.empty()) {
         if (auto* cloud = wxGetApp().fila_manager_cloud_sync()) {
