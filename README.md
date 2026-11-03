@@ -60,7 +60,7 @@ The Filament Manager keeps its spools on your computer (`filament_inventory/spoo
 - Each video frame has its own memory (frames could be overwritten while drawn), it is converted for drawing once per frame, and repaints are no longer forced synchronously.
 
 ### Splash screen
-Says ON STEROIDS, with a rotating quip.
+Says ON STEROIDS with the fork's version, and a rotating quip.
 
 ### Slicing and G-code fixes
 - Top surfaces: full-density rectilinear tops use monotonic ordering, removing the raised ridges that started at every hole.
@@ -76,6 +76,7 @@ Says ON STEROIDS, with a rotating quip.
 - Int128 high word on Windows ARM64 used an unsigned multiply, which could flip orientation tests.
 
 ### Stability and UI fixes
+- Object list (Linux): the app could crash a moment after arranging or filling a plate, when the list was rebuilt while a scroll to the old selection was still pending.
 - Send to printer: late plugin callbacks wrote into freed memory and GTK was touched from a worker thread, causing crashes and heap corruption.
 - Top bar: hovering the expand buttons froze the whole app on Wayland (popup input grab); a native tooltip is used on Linux.
 - Parameter tooltip cards stayed on screen under XWayland.
