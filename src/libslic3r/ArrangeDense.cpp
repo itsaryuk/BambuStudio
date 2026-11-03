@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <chrono>
 #include <climits>
 #include <cmath>
 #include <cstring>
@@ -261,9 +262,9 @@ ExPolygons instance_outline(const ModelInstance &instance)
     return union_ex(all);
 }
 
-void arrange_dense(ArrangePolygons &items, const ArrangePolygons &fixed, const Points &bedpts, const ArrangeParams &params)
+bool arrange_dense(ArrangePolygons &items, const ArrangePolygons &fixed, const Points &bedpts, const ArrangeParams &params, double time_limit)
 {
-    if (items.empty() || bedpts.size() < 3) return;
+    if (items.empty() || bedpts.size() < 3) return true;
     const Polygon     bed(bedpts);
     const BoundingBox bedbb = bed.bounding_box();
     // ~0.5 mm cells; coarser on very large beds to bound the grid size
@@ -271,8 +272,9 @@ void arrange_dense(ArrangePolygons &items, const ArrangePolygons &fixed, const P
     const int     W  = int(bedbb.size().x() / c), H = int(bedbb.size().y() / c);
     const Point   o  = bedbb.min;
     const coord_t min_infl = scaled(1.); // MIN_SEPARATION in libnest2d/nester.hpp
-    if (W < 1 || H < 1) return;
-    auto stop = [&] { return params.stopcondition && params.stopcondition(); };
+    if (W < 1 || H < 1) return false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(time_limit);
+    auto stop = [&] { return (params.stopcondition && params.stopcondition()) || std::chrono::steady_clock::now() > deadline; };
 
     // Base grids: bed edge and fixed items; "avoid if possible" regions only in hard_soft.
     auto base_grid = [&](int bin, bool with_soft) {
@@ -298,6 +300,7 @@ void arrange_dense(ArrangePolygons &items, const ArrangePolygons &fixed, const P
     std::vector<std::vector<int>> item_masks(items.size());
     std::map<std::string, int>    mask_index;
     for (size_t i = 0; i < items.size(); ++i) {
+        if (stop()) return false;
         const ArrangePolygon &ap      = items[i];
         const ExPolygons      outline = ap.outline.empty() ? ExPolygons{ap.poly} : ap.outline;
         const coord_t         infl    = std::max(ap.inflation, min_infl);
@@ -445,7 +448,7 @@ void arrange_dense(ArrangePolygons &items, const ArrangePolygons &fixed, const P
 
     std::vector<Result> results(variants.size());
     tbb::parallel_for(size_t(0), variants.size(), [&](size_t i) { results[i] = pack(variants[i].order, variants[i].top_key, W); });
-    if (stop()) return;
+    if (stop()) return false;
     size_t best = 0;
     for (size_t i = 1; i < results.size(); ++i)
         if (better(results[i], results[best])) best = i;
@@ -464,7 +467,8 @@ void arrange_dense(ArrangePolygons &items, const ArrangePolygons &fixed, const P
         tbb::parallel_for(size_t(0), jobs.size(), [&](size_t i) {
             narrow[i] = pack(variants[jobs[i].second].order, variants[jobs[i].second].top_key, jobs[i].first);
         });
-        if (stop()) return;
+        // out of time here: the cut-short strips can't hold everything, so `chosen` stays
+        if (params.stopcondition && params.stopcondition()) return false;
         auto squareness = [](const Result &r) { return std::make_pair(std::max(r.pile_w, r.pile_h), r.pile); };
         for (const Result &r : narrow)
             if (r.on_first == int(n) && squareness(r) < squareness(chosen)) chosen = r;
@@ -509,6 +513,7 @@ void arrange_dense(ArrangePolygons &items, const ArrangePolygons &fixed, const P
         ap.itemid      = p.rank;
         if (params.progressind) params.progressind(unsigned(p.rank + 1), ap.name);
     }
+    return true;
 }
 
 }} // namespace Slic3r::arrangement

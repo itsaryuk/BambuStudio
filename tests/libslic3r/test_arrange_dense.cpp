@@ -130,3 +130,17 @@ TEST_CASE("Dense arrange fits more than the old arrange", "[ArrangeDense]")
             REQUIRE(on_first(new_items) >= on_first(old_items));
         }
 }
+
+TEST_CASE("Dense arrange: out of time leaves the items alone", "[ArrangeDense]")
+{
+    ArrangePolygons items;
+    for (int i = 0; i < 40; ++i) items.push_back(item(shape({{0, 0}, {20, 0}, {20, 10}, {0, 10}})));
+    const ArrangePolygons before = items;
+    ArrangeParams params;
+    REQUIRE_FALSE(arrange_dense(items, {}, bed(256, 256), params, 0.));
+    for (size_t i = 0; i < items.size(); ++i) {
+        REQUIRE(items[i].translation == before[i].translation);
+        REQUIRE(items[i].bed_idx == before[i].bed_idx);
+    }
+    REQUIRE(arrange_dense(items, {}, bed(256, 256), params));
+}

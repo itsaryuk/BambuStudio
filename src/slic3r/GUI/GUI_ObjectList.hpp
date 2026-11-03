@@ -223,8 +223,14 @@ private:
 
     inline void ensure_current_item_visible()
     {
-        if (const auto &item = this->GetCurrentItem())
+        if (const auto &item = this->GetCurrentItem()) {
             this->EnsureVisible(item);
+#ifdef __WXGTK__
+            // GTK keeps the raw item and scrolls to it again at the next idle; when the list is
+            // rebuilt before that (arrange, fill plate) it reads a freed node and crashes. Do that now.
+            this->wxDataViewCtrl::OnInternalIdle();
+#endif
+        }
     }
 
 public:

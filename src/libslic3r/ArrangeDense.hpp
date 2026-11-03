@@ -19,7 +19,10 @@ namespace arrangement {
 // Same contract as arrange(): fixed items (with bed_idx) are obstacles, results go to
 // translation / rotation / bed_idx (0 = first bed, 1.. = overflow beds, -1 = fits
 // nowhere). Not meant for sequential printing.
-void arrange_dense(ArrangePolygons &items, const ArrangePolygons &fixed, const Points &bed, const ArrangeParams &params);
+// Returns false, leaving the items untouched, when it is stopped or runs past time_limit
+// seconds before it has a result; the caller then falls back to arrange().
+bool arrange_dense(ArrangePolygons &items, const ArrangePolygons &fixed, const Points &bed, const ArrangeParams &params,
+                   double time_limit = 15.);
 
 // The instance's real footprint: every model part projected onto the bed, in the same
 // frame as ArrangePolygon::poly (instance transformation without the XY offset).

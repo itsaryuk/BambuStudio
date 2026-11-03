@@ -939,9 +939,8 @@ void ArrangeJob::process()
 
     // The current plate gets the dense packer (real outlines, flips); by-object printing
     // keeps the old arrange, which knows about extruder clearance and print order.
-    if (only_on_partplate && !params.is_seq_print)
-        arrangement::arrange_dense(m_selected, m_unselected, bedpts, params);
-    else
+    // A dense pack that runs out of time leaves the items alone and the old arrange runs.
+    if (!(only_on_partplate && !params.is_seq_print && arrangement::arrange_dense(m_selected, m_unselected, bedpts, params)))
         arrangement::arrange(m_selected, m_unselected, bedpts, params);
 
     // sort by item id
