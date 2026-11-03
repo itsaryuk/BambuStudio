@@ -1,6 +1,7 @@
 #include "libslic3r/Technologies.hpp"
 #include "GUI_App.hpp"
 #include "PrintQueue.hpp"
+#include "SteroidsVersion.hpp"
 #include "BindDialog.hpp"
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
@@ -3263,7 +3264,7 @@ bool GUI_App::on_init_inner()
     }
 #endif
 
-    BOOST_LOG_TRIVIAL(info) << boost::format("gui mode, Current BambuStudio Version %1%")%SLIC3R_VERSION << ", BuildTime " << SLIC3R_BUILD_TIME;
+    BOOST_LOG_TRIVIAL(info) << boost::format("gui mode, Current BambuStudio Version %1%, ON STEROIDS %2%")%SLIC3R_VERSION%STEROIDS_VERSION << ", BuildTime " << SLIC3R_BUILD_TIME;
 
 #if !BBL_RELEASE_TO_PUBLIC
     BOOST_LOG_TRIVIAL(info) << boost::format("Build Version %1%")%SLIC3R_COMPILE_VERSION;
@@ -6358,6 +6359,7 @@ std::string GUI_App::format_display_version()
         else
             ++j;
     }
+    version_display += " | ON STEROIDS " STEROIDS_VERSION;
     return version_display;
 }
 

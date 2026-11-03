@@ -1,7 +1,14 @@
 ![image](https://user-images.githubusercontent.com/106916061/179006347-497d24c0-9bd6-45b7-8c49-d5cc8ecfe5d7.png)
 # BambuStudio ON STEROIDS
 
-A fork of Bambu Studio (based on the 2.8.3 beta) with a built-in thermal simulation, a settings advisor, and a batch of slicing, G-code and stability fixes. Everything runs offline on your computer. No account, no cloud, no subscription.
+A fork of Bambu Studio (based on 2.8.4.57) with a built-in thermal simulation, a settings advisor, and a batch of slicing, G-code and stability fixes. Everything runs offline on your computer. No account, no cloud, no subscription.
+
+## Versions
+Two version numbers, shown together in About and on the splash screen (`2.8.4.57 | ON STEROIDS 1.0.0`):
+- **Bambu Studio version** (`version.inc`): the upstream release this fork is based on. It is never changed by hand, because the network plug-in, the cloud and project files check it.
+- **ON STEROIDS version** (`src/slic3r/GUI/SteroidsVersion.hpp`): this fork's own release. Major goes up on a rebase onto a new Bambu Studio release, minor for new features, patch for fixes.
+
+Pushing a tag `steroids-v<version>` builds Windows and macOS on GitHub Actions and publishes them as a release. Pushes to master build too; the builds are under the run's artifacts.
 
 ## What is different from the original
 
@@ -20,7 +27,7 @@ A thermometer button in the top bar opens one dialog with Analyze, Optimize and 
 A magic-wand button next to Orient. Say what the print is for (functional, visual, fast draft) and it analyzes the plate in the background: bed contact, flat tops, overhang and unsupported areas, thin walls, measured from the mesh and from pre-sliced layer outlines. It then suggests walls, infill, shells, layer height, supports, brim, Arachne, monotonic top, seam and ironing settings, each with a short reason. Apply all or only the checked rows, as one undo step. Settings that differ per object become object overrides.
 
 ### Arrange: dense packing (new)
-"Arrange objects on current plate" fits far more onto the plate. It packs each part's real footprint instead of its convex hull, so parts nest into each other's corners and small parts go inside openings. With "Auto rotate for arrangement" (now on by default) parts turn 90°, 180° or 270° or to their tightest angle. It tries a dozen packing orders and keeps the one that fits the most; when everything fits the pile stays close to square and centred, clear of the prime tower and excluded areas. In tests on a 256 mm bed: 16 → 24 L-shapes, 15 → 27 triangles, 27 → 36 T-shapes. By-object printing and "Arrange all" keep the old engine, which now turns in quarter turns instead of 45° diagonals. Test target: `arrange_dense_tests`.
+"Arrange objects on current plate" fits far more onto the plate. It packs each part's real footprint instead of its convex hull, so parts nest into each other's corners and small parts go inside openings. With "Auto rotate for arrangement" (now on by default) parts turn 90°, 180° or 270° or to their tightest angle. It tries a dozen packing orders and keeps the one that fits the most; when everything fits the pile stays close to square and centred, clear of the prime tower and excluded areas. In tests on a 256 mm bed: 16 → 24 L-shapes, 15 → 27 triangles, 27 → 36 T-shapes. If the dense packing takes longer than 15 seconds, the old engine runs instead. By-object printing and "Arrange all" keep the old engine, which now turns in quarter turns instead of 45° diagonals. Test target: `arrange_dense_tests`.
 
 ### Purge reduction (new)
 - The filament order of all layers is planned together (minimum total flush over the whole print, not one layer at a time).
@@ -34,6 +41,9 @@ Tick "Section view" at the bottom of the legend to cut the toolpaths with a mova
 
 ### Duplicate plate (new)
 Plate menu → Duplicate Plate adds a copy right after the plate: every object on it (positions, rotations, per-object settings, painted colours) and the plate's own settings (plate type, print sequence, filament order, name).
+
+### Clone and Fill Plate (new)
+Right-click an object → Clone and Fill Plate fills the rest of the plate with as many copies as fit, packed by the real footprint around everything already there. If the dense packing takes longer than 15 seconds, the old grid fill is used.
 
 ### Print queue (new)
 "Add to Queue" in the send dialog (usable while the printer is busy) keeps the sliced plate and every send option. Each printer prints its queue in order: when it is free, a notification asks you to clear the plate, and one click sends the next job. A job can also wait for a start time; confirm the plate is clear beforehand and it starts unattended. View → Print Queue lists, reorders and removes jobs. Bambu Studio has to be running.

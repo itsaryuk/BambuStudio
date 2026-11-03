@@ -40,10 +40,11 @@ jobs:
         if: ${{ !startsWith(inputs.os, 'windows') }}
         run: |
           ver_pure=$(grep 'set(SLIC3R_VERSION' version.inc | cut -d '"' -f2)
+          ver_ours=$(grep 'define STEROIDS_VERSION' src/slic3r/GUI/SteroidsVersion.hpp | cut -d '"' -f2)
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             ver="PR-${{ github.event.number }}"
           else
-            ver=V$ver_pure
+            ver=ONSTEROIDS-${ver_ours}_Bambu-${ver_pure}
           fi
           echo "ver=$ver" >> $GITHUB_ENV
           echo "ver_pure=$ver_pure" >> $GITHUB_ENV
@@ -65,7 +66,11 @@ jobs:
               if ($versionContent -match 'set\(SLIC3R_VERSION "(.*?)"\)') {
                   $ver = $matches[1]
               }
-              $ver = "V$ver"
+              $oursContent = Get-Content src/slic3r/GUI/SteroidsVersion.hpp -Raw
+              if ($oursContent -match 'define STEROIDS_VERSION "(.*?)"') {
+                  $ours = $matches[1]
+              }
+              $ver = "ONSTEROIDS-${ours}_Bambu-$ver"
           }
 
           echo "ver=$ver" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
