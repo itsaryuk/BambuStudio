@@ -128,14 +128,14 @@ jobs:
             brew install $USER/old-cmake/cmake@3.31.0
             brew link --overwrite cmake@3.31.0
             brew pin cmake@3.31.0
-            # after the cmake download: Homebrew's curl links zstd
-            brew uninstall --ignore-dependencies zstd
+            # hide zstd from the deps build; unlink keeps opt/zstd, which Homebrew's curl loads
+            brew unlink zstd || true
             ./BuildMac.sh -d -x -a x86_64 -t 10.15 -1
             for arch in x86_64; do
                 (cd "${{ github.workspace }}/deps/build/${arch}" && \
                 find . -mindepth 1 -maxdepth 1 ! -name 'BambuStudio_deps' -exec rm -rf {} +)
             done
-            brew install zstd
+            brew link zstd || true
       
       - name: Build on Mac ${{ inputs.arch }}
         if: inputs.os == 'macos-15' || inputs.os == 'macos-26'
@@ -148,14 +148,14 @@ jobs:
             brew install $USER/old-cmake/cmake@3.31.0
             brew link --overwrite cmake@3.31.0
             brew pin cmake@3.31.0
-            # after the cmake download: Homebrew's curl links zstd
-            brew uninstall --ignore-dependencies zstd
+            # hide zstd from the deps build; unlink keeps opt/zstd, which Homebrew's curl loads
+            brew unlink zstd || true
             ./BuildMac.sh -d -x -a universal -t 10.15 -1
             for arch in arm64 x86_64; do
                 (cd "${{ github.workspace }}/deps/build/${arch}" && \
                 find . -mindepth 1 -maxdepth 1 ! -name 'BambuStudio_deps' -exec rm -rf {} +)
             done
-            brew install zstd
+            brew link zstd || true
 
       - name: pack deps on Macos
         if: inputs.os == 'macos-15-intel' || inputs.os == 'macos-15' || inputs.os == 'macos-26'
