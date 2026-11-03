@@ -2515,7 +2515,7 @@ void MenuFactory::append_menu_item_locked(wxMenu* menu)
 void MenuFactory::append_menu_item_fill_bed(wxMenu *menu)
 {
     append_menu_item(
-        menu, wxID_ANY, _L("Fill bed with copies"), _L("Fill the remaining area of bed with copies of the selected object"),
+        menu, wxID_ANY, _L("Clone and Fill Plate"), _L("Fill the rest of the plate with as many copies of the selected object as fit"),
         [](wxCommandEvent &) { plater()->fill_bed_with_instances(); }, "", nullptr, []() { return plater()->can_increase_instances(); }, m_parent);
 }
 

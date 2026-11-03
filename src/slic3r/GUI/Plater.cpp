@@ -6823,7 +6823,7 @@ public:
 
         void fill_bed()
         {
-            m->take_snapshot("Fill bed");
+            m->take_snapshot("Clone and Fill Plate");
             start(m_fill_bed_id);
         }
 

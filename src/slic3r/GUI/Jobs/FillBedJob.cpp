@@ -3,6 +3,7 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/ModelArrange.hpp"
+#include "libslic3r/ArrangeDense.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "libnest2d/common.hpp"
@@ -73,6 +74,7 @@ void FillBedJob::prepare()
             {
                 if (mo->instances[inst_idx]->printable)
                 {
+                    ap.outline = arrangement::instance_outline(*mo->instances[inst_idx]);
                     ++ap.priority;
                     ap.itemid = m_selected.size();
                     m_selected.emplace_back(ap);
@@ -135,9 +137,14 @@ void FillBedJob::prepare()
 
     double sc = scaled<double>(1.) * scaled(1.);
 
-    auto polys = offset_ex(m_selected.front().poly, params.min_obj_distance / 2);
-    ExPolygon poly = polys.empty() ? m_selected.front().poly : polys.front();
-    double poly_area = poly.area() / sc;
+    // The dense packer nests the real footprint, so more copies fit than the convex hull suggests.
+    const ExPolygons &footprint = m_selected.front().outline;
+    const coord_t     gap       = std::max<coord_t>(params.min_obj_distance / 2, scaled<coord_t>(0.5));
+    double poly_area = 0.;
+    for (const ExPolygon &e : offset_ex(footprint.empty() ? ExPolygons{m_selected.front().poly} : footprint, gap))
+        poly_area += e.area();
+    poly_area /= sc;
+    if (poly_area <= 0.) return;
     // m_unselected 的 bed_idx 在 prepare 阶段已统一置 0，按 0 判定而非 cur_plate_index。
     double unsel_area = std::accumulate(m_unselected.begin(),
                                         m_unselected.end(), 0.,
@@ -149,7 +156,8 @@ void FillBedJob::prepare()
     double bed_area   = Polygon{m_bedpts}.area() / sc;
 
     // This is the maximum number of items, the real number will always be close but less.
-    int needed_items = (bed_area - fixed_area) / poly_area;
+    // ponytail: area bound, capped; extra copies just overflow and are dropped
+    int needed_items = std::clamp(int((bed_area - fixed_area) / poly_area), 0, 500);
 
     //int sel_id = m_plater->get_selection().get_instance_idx();
     // if the selection is not a single instance, choose the first as template
@@ -163,6 +171,7 @@ void FillBedJob::prepare()
     for (int i = 0; i < needed_items; ++i) {
         ArrangePolygon ap = template_ap;
         ap.poly = m_selected.front().poly;
+        ap.outline = m_selected.front().outline;
         ap.bed_idx = PartPlateList::MAX_PLATES_COUNT;
         ap.height = 1;
         ap.itemid = -1;
@@ -257,7 +266,40 @@ void FillBedJob::process()
     const long long cells_y = (step_y > 0.0) ? (long long)std::floor(bed_h / step_y) : 0;
     const long long grid_cap = cells_x * cells_y;
 
-    if (grid_cap > FILL_BED_GRID_PATH_MIN_CAPACITY) {
+    bool dense_done = false;
+    if (!params.is_seq_print) {
+        // Dense fill: copies nest into each other and around everything already on the plate.
+        // The originals stay where they are, as obstacles in plate-0 local coordinates.
+        PartPlateList &plist   = m_plater->get_partplate_list();
+        const int      cur     = plist.get_curr_plate_index();
+        const int      cols    = plist.get_plate_cols();
+        const coord_t  dx      = bed_stride_x(m_plater) * (cur % cols);
+        const coord_t  dy      = bed_stride_y(m_plater) * (cur / cols);
+        const BoundingBox bed_bb = get_extents(m_bedpts);
+        ArrangePolygons fixed  = m_unselected;
+        ArrangePolygons copies;
+        for (ArrangePolygon ap : m_selected) {
+            if (ap.priority == 0) { copies.emplace_back(std::move(ap)); continue; }
+            ap.translation(X) -= dx;
+            ap.translation(Y) += dy;
+            ap.bed_idx = 0;
+            if (bed_bb.overlap(ap.transformed_poly().contour.bounding_box()))
+                fixed.emplace_back(std::move(ap));
+        }
+        // out of time (or stopped): the grid / NFP fill below takes over
+        if (arrangement::arrange_dense(copies, fixed, m_bedpts, params)) {
+            int n = 0;
+            for (ArrangePolygon &ap : copies)
+                if (ap.bed_idx == 0) ap.itemid = ++n;
+            m_selected = std::move(copies); // finalize applies only these
+            dense_done = true;
+            BOOST_LOG_TRIVIAL(info) << "FillBedJob::process[dense]: placed " << n << " copies";
+        } else
+            BOOST_LOG_TRIVIAL(warning) << "FillBedJob::process[dense]: gave up, using the default fill";
+    }
+    if (dense_done) {
+    }
+    else if (grid_cap > FILL_BED_GRID_PATH_MIN_CAPACITY) {
         auto offset_on_origin = tmpl.poly.contour.bounding_box().center();
 
         // 用 m_bedpts (已含 bed_shrink + brim_skirt_distance/2) 作为安全区，避免边缘副本 brim/skirt 越界。
