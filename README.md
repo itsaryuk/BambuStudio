@@ -60,7 +60,7 @@ The Filament Manager keeps its spools on your computer (`filament_inventory/spoo
 - Each video frame has its own memory (frames could be overwritten while drawn), it is converted for drawing once per frame, and repaints are no longer forced synchronously.
 
 ### Splash screen
-Says ON STEROIDS with the fork's version, and a rotating quip.
+Says ON STEROIDS with the fork's version under the title, and a rotating quip.
 
 ### Slicing and G-code fixes
 - Top surfaces: full-density rectilinear tops use monotonic ordering, removing the raised ridges that started at every hole.

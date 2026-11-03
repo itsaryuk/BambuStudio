@@ -407,7 +407,7 @@ public:
             wxRect tag_rect(wxPoint(0, title_rect.GetBottom() + text_padding * 2), wxSize(width, FromDIP(24 * m_scale)));
             memDc.SetFont(Label::Head_16);
             memDc.SetTextForeground(wxColour(0, 174, 66));
-            memDc.DrawLabel("ON STEROIDS", tag_rect, wxALIGN_CENTER);
+            memDc.DrawLabel("ON STEROIDS " STEROIDS_VERSION, tag_rect, wxALIGN_CENTER);
             tag_rect.Offset(0, tag_rect.GetHeight());
             memDc.SetFont(Label::Body_13);
             memDc.SetTextForeground(StateColor::darkModeColorFor(wxColor(134, 134, 134)));
@@ -512,7 +512,9 @@ private:
             title = wxGetApp().is_editor() ? SLIC3R_APP_FULL_NAME : GCODEVIEWER_APP_NAME;
 
             // dynamically get the version to display
-            version = _L("V") + " " + GUI_App::format_display_version();
+            // the fork version goes on the ON STEROIDS line below; both don't fit beside the title
+            const std::string v = GUI_App::format_display_version();
+            version = _L("V") + " " + v.substr(0, v.find(" | "));
 
             // credits infornation
             credits = "";
