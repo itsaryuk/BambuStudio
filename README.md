@@ -23,8 +23,28 @@ A thermometer button in the top bar opens one dialog with Analyze, Optimize and 
 - **Calibration tower**: Calibrate walks through three steps: print a cone that runs hot towards the tip, read it with the illustrated guide, enter the height where the surface turns rough. The result is stored per filament type and printer model (printers differ in airflow), and the dialog warns when a calibration came from another printer or a very different layer height.
 - Ships with its own test target (`thermal_quality_tests`).
 
+**How to use**
+1. Slice the plate.
+2. Click the thermometer button in the top bar. Pick *Check temperatures* (Analyze) or *Adjust layer speeds* (Optimize) and press Start.
+
+![Thermal Optimization dialog](docs/images/thermal-dialog.png)
+
+3. The result tells you whether the layers run hot or cold and what to change; the preview switches to the Thermal Index colours (red too hot, green comfortable, blue too cold).
+
+![Analyze result](docs/images/thermal-result.png)
+![Thermal Index preview](docs/images/thermal-preview.png)
+
 ### Settings Advisor (new)
 A magic-wand button next to Orient. Say what the print is for (functional, visual, fast draft) and it analyzes the plate in the background: bed contact, flat tops, overhang and unsupported areas, thin walls, measured from the mesh and from pre-sliced layer outlines. It then suggests walls, infill, shells, layer height, supports, brim, Arachne, monotonic top, seam and ironing settings, each with a short reason. Apply all or only the checked rows, as one undo step. Settings that differ per object become object overrides.
+
+**How to use**
+1. Click the magic wand next to Orient and pick what the print is for.
+
+![Settings Advisor: purpose](docs/images/advisor-ask.png)
+
+2. Untick any row you don't want and press *Apply selected* (or *Apply all*). One undo step reverts everything.
+
+![Settings Advisor: suggestions](docs/images/advisor-result.png)
 
 ### Arrange: dense packing (new)
 "Arrange objects on current plate" fits far more onto the plate. It packs each part's real footprint instead of its convex hull, so parts nest into each other's corners and small parts go inside openings. With "Auto rotate for arrangement" (now on by default) parts turn 90°, 180° or 270° or to their tightest angle. It tries a dozen packing orders and keeps the one that fits the most; when everything fits the pile stays close to square and centred, clear of the prime tower and excluded areas. In tests on a 256 mm bed: 16 → 24 L-shapes, 15 → 27 triangles, 27 → 36 T-shapes. If the dense packing takes longer than 15 seconds, the old engine runs instead. By-object printing and "Arrange all" keep the old engine, which now turns in quarter turns instead of 45° diagonals. Test target: `arrange_dense_tests`.
@@ -39,22 +59,73 @@ A magic-wand button next to Orient. Say what the print is for (functional, visua
 ### Preview: section view (new)
 Tick "Section view" at the bottom of the legend to cut the toolpaths with a movable plane (rotation, tilt, offset) and look inside the print.
 
+**How to use:** Preview → tick *Section view* in the legend → drag Rotation, Tilt and Offset.
+
+![Section view](docs/images/section-view.png)
+
 ### Duplicate plate (new)
 Plate menu → Duplicate Plate adds a copy right after the plate: every object on it (positions, rotations, per-object settings, painted colours) and the plate's own settings (plate type, print sequence, filament order, name).
+
+**How to use:** right-click one of the plate's icons at the edge of the bed (or the plate in the object list) → *Duplicate Plate*.
+
+![Duplicate Plate in the plate menu](docs/images/duplicate-plate-menu.png)
 
 ### Clone and Fill Plate (new)
 Right-click an object → Clone and Fill Plate fills the rest of the plate with as many copies as fit, packed by the real footprint around everything already there. If the dense packing takes longer than 15 seconds, the old grid fill is used.
 
+**How to use:** right-click the object → *Clone and Fill Plate*.
+
+![Clone and Fill Plate menu](docs/images/clone-fill-menu.png)
+![A filled plate](docs/images/clone-fill-result.png)
+
 ### Print queue (new)
 "Add to Queue" in the send dialog (usable while the printer is busy) keeps the sliced plate and every send option. Each printer prints its queue in order: when it is free, a notification asks you to clear the plate, and one click sends the next job. A job can also wait for a start time; confirm the plate is clear beforehand and it starts unattended. View → Print Queue lists, reorders and removes jobs. Bambu Studio has to be running.
+
+**How to use**
+1. Slice, open *Print plate* and press *Add to Queue* instead of Send. Choose whether it starts as soon as the plate is confirmed clear or at a set time.
+2. When the printer is free, a notification asks you to clear the plate; *The plate is clear, start* sends the next job.
+
+![Next job notification](docs/images/print-queue-notify.png)
+
+3. View → *Print Queue…* shows every waiting job; confirm a clear plate, reorder or remove from there.
+
+![View menu](docs/images/print-queue-menu.png)
+![Print Queue window](docs/images/print-queue.png)
 
 ### Spool inventory (new)
 The Filament Manager keeps its spools on your computer (`filament_inventory/spools.json`), with or without a Bambu account. When a print sent from the app finishes, the grams it used come off the spool in each AMS slot; a cancelled or failed print takes the share printed so far. Spools with a Bambu RFID tag are left to the printer's own reading. The send dialog warns when an untagged spool holds less than the print needs. Prints started from the printer screen or another app are not counted.
 
+**How to use:** open the *Filament Manager* tab and add your spools (*+ Add Filament*). The *Remain* column goes down after each print sent from the app.
+
+![Filament Manager with spools](docs/images/spool-inventory.png)
+
 ### Presets and printing
 - Copy a user filament or process preset to other printers: your changes are laid over the matching system preset of each chosen printer, so the copy keeps that printer's nozzle and speed values.
-- Custom filaments: Serial is optional (no more "Prusament PLA PLA"); "Based on type" starts from the plain "Generic <type>" preset; Edit Filament → Rename changes the name and vendor on every printer's copy at once, keeping its filament ID so AMS slots still match.
 - Send print job: hovering a filament shows the flow dynamics profile and K value the printer holds for that slot, and a line explains what Auto, On and Off calibration do with the selected profiles.
+
+**Copy a preset to other printers:** open one of your own filament or process presets (the button is hidden on system presets), click the copy button next to save/delete, tick the printers.
+
+![Copy button](docs/images/copy-preset-button.png)
+![Choose printers](docs/images/copy-preset-dialog.png)
+
+### Custom filaments
+- **Serial is optional.** Vendor and type are enough: "Prusament PLA", not "Prusament PLA PLA".
+- **Starts from the generic preset.** *Create based on filament type* preselects "Generic <type>" as the base, so a new filament does not inherit another brand's tuning.
+- **Rename.** Change the name and vendor of a custom filament on every printer at once. Its filament ID is kept, so AMS slots and plates that use it still match.
+
+**How to use**
+1. Filament list (gear next to *Filament* in Project Filaments) → *Custom Filaments* → *New custom filament*. Pick vendor and type; Series can stay empty.
+
+![Create filament: Series optional](docs/images/create-filament.png)
+
+2. With *Create based on filament type*, the base is already set to the generic preset; tick the printers and continue.
+
+![Generic base preselected](docs/images/create-filament-generic.png)
+
+3. To rename, click the edit icon of a custom filament → *Rename* → change vendor and name → OK.
+
+![Edit Filament](docs/images/edit-filament.png)
+![Rename](docs/images/rename-filament.png)
 
 ### Camera view
 - Dragging moves the zoomed live view (the original zooms with the wheel but could only zoom on the centre).
@@ -62,6 +133,8 @@ The Filament Manager keeps its spools on your computer (`filament_inventory/spoo
 
 ### Splash screen
 Says ON STEROIDS with the fork's version under the title, and a rotating quip.
+
+![Splash screen](docs/images/splash.png)
 
 ### Slicing and G-code fixes
 - Top surfaces: full-density rectilinear tops use monotonic ordering, removing the raised ridges that started at every hole.

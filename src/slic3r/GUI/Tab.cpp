@@ -285,7 +285,7 @@ void Tab::create_preset_tab()
     add_scaled_button(m_top_panel, &m_btn_save_preset, "save");
     add_scaled_button(m_top_panel, &m_btn_delete_preset, "cross");
     if (m_type == Preset::TYPE_FILAMENT || m_type == Preset::TYPE_PRINT) {
-        add_scaled_button(m_top_panel, &m_btn_copy_preset, "menu_copy");
+        add_scaled_button(m_top_panel, &m_btn_copy_preset, "tree_copy");
         m_btn_copy_preset->SetToolTip(_L("Copy this preset to other printers"));
         m_btn_copy_preset->Hide();
     }
