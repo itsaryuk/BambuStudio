@@ -43,12 +43,12 @@ $(document).ready(function () {
     // any other entry into step2 (fresh open, or step2 → step1 → step2) starts clean.
     sessionStorage.removeItem('step2');
 
-    // ── 下一步按鈕禁用逻辑：vendor + type + serial 全填完才可点 ──
+    // ── 下一步按鈕禁用逻辑：vendor + type 填完才可点 ──
     function updateNextBtn() {
         const vendor = ($('#input-vendor').val() || '').trim();
         const type   = ($('#input-type').val()   || '').trim();
         const serial = ($('#input-series').val()  || '').trim();
-        $('#btn-next').prop('disabled', !(vendor && type && serial));
+        $('#btn-next').prop('disabled', !(vendor && type)); // serial is optional
     }
     // 监听三个字段变化
     $('#input-vendor, #input-type').on('change', updateNextBtn);

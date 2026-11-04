@@ -1122,7 +1122,8 @@ static bool build_and_validate_filament_name(wxWindow *parent, const json &j,
     boost::algorithm::trim(vendor);
     boost::algorithm::trim(serial);
 
-    if (vendor.empty() || serial.empty()) {
+    // Serial is optional: "Prusament PLA" rather than forcing "Prusament PLA PLA".
+    if (vendor.empty()) {
         MessageDialog(parent,
             _L("There may be escape characters in the vendor or serial input of filament. Please delete and re-enter."),
             wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Info"), wxYES | wxYES_DEFAULT | wxCENTRE).ShowModal();
@@ -1137,7 +1138,7 @@ static bool build_and_validate_filament_name(wxWindow *parent, const json &j,
 
     std::string name = vendor;
     if (!type.empty()) name += " " + type;
-    name += " " + serial;
+    if (!serial.empty()) name += " " + serial;
 
     PresetBundle *pb = wxGetApp().preset_bundle;
     if (pb->filaments.is_alias_exist(name)) {

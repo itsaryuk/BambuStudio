@@ -25,6 +25,10 @@ $(document).ready(function () {
         send({ command: 'close_page' });
     });
 
+    $('#btn-rename').on('click', function () {
+        send({ command: 'edit_filament_rename' });
+    });
+
     $('#btn-add-preset').on('click', function () {
         send({ command: 'edit_filament_add_preset' });
     });

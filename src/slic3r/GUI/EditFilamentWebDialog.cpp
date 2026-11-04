@@ -2,6 +2,7 @@
 
 #include <wx/webview.h>
 #include <boost/format.hpp>
+#include <boost/algorithm/string.hpp>
 #include <boost/log/trivial.hpp>
 
 #include "GUI_App.hpp"
@@ -13,6 +14,8 @@
 #include "Widgets/WebView.hpp"
 #include "CreatePresetsDialog.hpp"
 #include "Tab.hpp"
+#include "MsgDialog.hpp"
+#include "Plater.hpp"
 
 using namespace nlohmann;
 
@@ -162,6 +165,143 @@ void EditFilamentWebDialog::send_filament_edit_data()
                             << m_filament_name << " presets=" << presets_arr.size();
 }
 
+// ── Rename ─────────────────────────────────────────────────────────────────
+
+// Renames every printer's copy ("<name> @<printer>") of this custom filament and sets its
+// vendor. The filament_id stays, so AMS slots and the filament list keep matching it.
+void EditFilamentWebDialog::rename_filament()
+{
+    PresetBundle     *pb = wxGetApp().preset_bundle;
+    PresetCollection &fc = pb->filaments;
+    if (m_filament_name.empty()) send_filament_edit_data();
+    const std::string old_name = m_filament_name;
+
+    std::vector<const Preset *> ours;
+    for (const Preset &p : fc.get_presets())
+        if (!p.is_system && !p.is_default && p.filament_id == m_filament_id &&
+            p.name.compare(0, old_name.size(), old_name) == 0)
+            ours.push_back(&p);
+    if (ours.empty()) return;
+
+    wxDialog dlg(this, wxID_ANY, _L("Rename filament"));
+    auto *vendor_in = new wxTextCtrl(&dlg, wxID_ANY, from_u8(m_filament_vendor), wxDefaultPosition, wxSize(FromDIP(320), -1));
+    auto *name_in   = new wxTextCtrl(&dlg, wxID_ANY, from_u8(old_name), wxDefaultPosition, wxSize(FromDIP(320), -1));
+    auto *grid = new wxFlexGridSizer(2, FromDIP(8), FromDIP(8));
+    grid->Add(new wxStaticText(&dlg, wxID_ANY, _L("Vendor")), 0, wxALIGN_CENTER_VERTICAL);
+    grid->Add(vendor_in, 1, wxEXPAND);
+    grid->Add(new wxStaticText(&dlg, wxID_ANY, _L("Name")), 0, wxALIGN_CENTER_VERTICAL);
+    grid->Add(name_in, 1, wxEXPAND);
+    auto *top = new wxBoxSizer(wxVERTICAL);
+    top->Add(new wxStaticText(&dlg, wxID_ANY, _L("Applies to this filament on every printer.")), 0, wxALL, FromDIP(12));
+    top->Add(grid, 0, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(12));
+    top->Add(dlg.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0, wxALL | wxEXPAND, FromDIP(12));
+    dlg.SetSizerAndFit(top);
+    dlg.CentreOnParent();
+    wxGetApp().UpdateDlgDarkUI(&dlg);
+    if (dlg.ShowModal() != wxID_OK) return;
+
+    auto clean = [](wxString v) {
+        std::string s = into_u8(v);
+        s.erase(std::remove_if(s.begin(), s.end(), [](char c) { return c == '@' || c == ';' || c == '\n' || c == '\r' || c == '\t' || c == '\v'; }), s.end());
+        boost::algorithm::trim(s);
+        return s;
+    };
+    const std::string vendor = clean(vendor_in->GetValue());
+    const std::string name   = clean(name_in->GetValue());
+    auto info = [this](const wxString &m) { MessageDialog(this, m, _L("Rename filament"), wxOK | wxICON_WARNING).ShowModal(); };
+    if (vendor.empty() || name.empty()) return info(_L("Vendor and name can not be empty."));
+    if ((vendor + name).find_first_of("<>[]:/\\|?*\"") != std::string::npos) // same set as SavePresetDialog
+        return info(_L("Name is invalid;") + "\n" + _L("illegal characters:") + " <>[]:/\\|?*\"");
+    if (vendor == "Bambu" || vendor == "Generic")
+        return info(_L("\"Bambu\" or \"Generic\" can not be used as a Vendor for custom filaments."));
+    if (name == old_name && vendor == m_filament_vendor) return;
+
+    for (const Preset *p : ours)
+        if (fc.get_edited_preset().name == p->name && fc.current_is_dirty())
+            return info(_L("This filament has unsaved changes. Save or discard them first."));
+
+    std::map<std::string, std::string> new_names, inherits, base_ids; // old preset name -> new name / parent / parent's cloud id
+    for (const Preset *p : ours) {
+        const std::string to = name + p->name.substr(old_name.size());
+        if (to != p->name && fc.find_preset(to, false))
+            return info(wxString::Format(_L("A preset named \"%s\" already exists."), from_u8(to)));
+        new_names[p->name] = to;
+        inherits[p->name]  = p->inherits();
+        base_ids[p->name]  = p->base_id;
+    }
+
+    const bool  login   = wxGetApp().is_user_login();
+    const auto  user_id = login ? wxGetApp().getAgent()->get_user_id() : std::string();
+    const std::string selected = fc.get_selected_preset_name();
+    std::string       new_selected;
+
+    if (name == old_name) {
+        // Vendor only: edit in place.
+        for (const Preset *cp : ours) {
+            Preset *p = fc.find_preset(cp->name, false);
+            p->config.option<ConfigOptionStrings>("filament_vendor", true)->values = {vendor};
+            p->save(nullptr);
+            if (!p->setting_id.empty()) fc.set_sync_info_and_save(p->name, p->setting_id, "update", 0);
+        }
+        if (std::any_of(ours.begin(), ours.end(), [&](const Preset *p) { return p->name == selected; }))
+            new_selected = selected; // reload the edited copy with the new vendor
+    } else {
+        std::vector<std::string> failures;
+        fc.clone_presets(ours, failures, [&](Preset &p, Preset::Type &) {
+            const std::string from = p.name;
+            p.name       = new_names[from];
+            const std::string &parent = inherits[from]; // clone_presets clears it; a rename keeps the parent
+            p.inherits() = new_names.count(parent) ? new_names[parent] : parent;
+            p.config.option<ConfigOptionStrings>("filament_vendor", true)->values = {vendor};
+            p.sync_info  = "create";
+            p.user_id    = user_id;
+        });
+        if (!failures.empty()) return info(_L("Renaming failed."));
+        for (const auto &kv : new_names)
+            if (Preset *p = fc.find_preset(kv.second, false)) {
+                p->base_id = base_ids[kv.first]; // clone_presets clears it; the cloud diff needs the parent's id
+                p->save_info();                  // sync_info for the cloud upload
+            }
+
+        // User presets that inherit from a renamed base follow it.
+        std::vector<std::string> children;
+        for (const Preset &p : fc.get_presets())
+            if (!p.is_system && new_names.count(p.inherits()) && !new_names.count(p.name)) children.push_back(p.name);
+        for (const std::string &c : children)
+            if (Preset *p = fc.find_preset(c, false)) {
+                p->inherits() = new_names[p->inherits()];
+                p->save(nullptr);
+            }
+
+        if (new_names.count(selected)) {
+            new_selected = new_names[selected];
+            fc.select_preset_by_name(new_selected, true); // before the old one is deleted
+        }
+        for (const auto &[from, to] : new_names) {
+            Preset *p = fc.find_preset(from, false);
+            if (!p) continue;
+            if (!p->setting_id.empty()) {
+                fc.set_sync_info_and_save(p->name, p->setting_id, "delete", 0);
+                wxGetApp().delete_preset_from_cloud(p->setting_id);
+            }
+            fc.delete_preset(from);
+        }
+        for (std::string &slot : pb->filament_presets)
+            if (new_names.count(slot)) slot = new_names[slot];
+        pb->update_compatible(PresetSelectCompatibleType::Never);
+        pb->export_selections(*wxGetApp().app_config);
+    }
+    BOOST_LOG_TRIVIAL(info) << "EditFilamentWebDialog: renamed " << old_name << " -> " << name << " (vendor " << vendor << ")";
+
+    m_filament_name.clear();
+    m_filament_vendor.clear();
+    send_filament_edit_data();
+    if (!new_selected.empty()) {
+        fc.select_preset_by_name(new_selected, true);
+        if (Tab *tab = wxGetApp().get_tab(Preset::TYPE_FILAMENT)) tab->select_preset(new_selected);
+    }
+}
+
 // ── Event handlers ─────────────────────────────────────────────────────────
 
 void EditFilamentWebDialog::OnDocumentLoaded(wxWebViewEvent &evt)
@@ -247,6 +387,9 @@ void EditFilamentWebDialog::OnScriptMessage(wxWebViewEvent &evt)
                                                  m_filament_vendor, m_filament_name);
             if (add_dlg.ShowModal() == wxID_OK)
                 send_filament_edit_data(); // refresh list
+
+        } else if (cmd == "edit_filament_rename") {
+            rename_filament();
 
         } else if (cmd == "request_filament_edit_data") {
             send_filament_edit_data();

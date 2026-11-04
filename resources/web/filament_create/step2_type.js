@@ -97,6 +97,16 @@ $(document).ready(function () {
                         loadPrinterList(s.base_preset);
                     }
                 } catch (e) {}
+                // Nothing remembered: start from the plain "Generic <type>" settings, so a
+                // new filament does not silently inherit another brand's tuning.
+                if (!selectedPreset) {
+                    var t = (JSON.parse(sessionStorage.getItem('step1') || '{}').type || '').trim();
+                    if (t && systemPresets.indexOf('Generic ' + t) !== -1) {
+                        selectedPreset = 'Generic ' + t;
+                        $('#input-base-preset').val(selectedPreset);
+                        loadPrinterList(selectedPreset);
+                    }
+                }
             } else if (data.command === 'compatible_printers') {
                 // data.printers: [
                 //   { name: 'Bambu Lab A1', presets: ['Bambu Lab A1 0.4 nozzle', 'Bambu Lab A1 0.2 nozzle'] },

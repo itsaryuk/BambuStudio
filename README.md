@@ -53,6 +53,7 @@ The Filament Manager keeps its spools on your computer (`filament_inventory/spoo
 
 ### Presets and printing
 - Copy a user filament or process preset to other printers: your changes are laid over the matching system preset of each chosen printer, so the copy keeps that printer's nozzle and speed values.
+- Custom filaments: Serial is optional (no more "Prusament PLA PLA"); "Based on type" starts from the plain "Generic <type>" preset; Edit Filament → Rename changes the name and vendor on every printer's copy at once, keeping its filament ID so AMS slots still match.
 - Send print job: hovering a filament shows the flow dynamics profile and K value the printer holds for that slot, and a line explains what Auto, On and Off calibration do with the selected profiles.
 
 ### Camera view

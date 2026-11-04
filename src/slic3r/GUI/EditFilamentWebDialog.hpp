@@ -34,6 +34,7 @@ private:
     void OnError(wxWebViewEvent &evt);
 
     void send_filament_edit_data();
+    void rename_filament(); // name and vendor of every printer's copy
     void run_script(const wxString &js);
 };
 
