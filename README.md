@@ -14,6 +14,10 @@ Pushing a tag `steroids-v<version>` builds Windows and macOS on GitHub Actions a
 
 ### Thermal Optimization (new)
 A thermometer button in the top bar opens one dialog with Analyze, Optimize and Calibrate. Analyze and Optimize unlock once the plate is sliced.
+
+![Two cones from the same file: left optimized, right not](docs/images/thermal-cones.jpg)
+*The same cone printed twice. Left: with Thermal Optimization. Right: without, the hot tip sags and strings.*
+
 - **Analyze** simulates how warm each layer still is when the next one lands and rates every toolpath from cold (-1) to hot (+1). The result shows up as the Thermal Index colour schemes in the preview, with an outcome, the direction of the problem (overcooling or overheating), per-layer caveats and concrete suggestions.
 - **Optimize** rescales layer speeds so every layer lands just under the hot edge of the material's comfort window, within your limits (speed-up, slow-down, volumetric cap, keep outer walls). Cool layers speed up to the flow cap (up to 3x by default) and are never slowed; hot layers may go below the filament's minimum speed, down to the slow-down limit (50 % by default). Layer 0 and quality-sensitive roles are left alone. M73 progress lines are recomputed, so the printer's time estimate stays right.
 - **Cooling pauses and cooling tower** for layers that stay hot even at the slowest speed: Optimize can park the head clear of the part for the seconds the model asks for (capped per layer, 15 s by default), and Analyze can add a hollow cooling tower beside the parts so small layers gain time without pausing.
