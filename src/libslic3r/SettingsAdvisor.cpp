@@ -187,7 +187,7 @@ struct Desired
 };
 
 // Per-object desired values for the options that can differ between objects.
-std::map<std::string, Desired> desired_for_object(const ObjectAnalysis &obj, Intent intent, double layer_height, double nozzle)
+std::map<std::string, Desired> desired_for_object(const ObjectAnalysis &obj, Intent intent, double layer_height, double line)
 {
     std::map<std::string, Desired> d;
     const char *intent_name = intent == Intent::Functional ? "functional" : intent == Intent::Visual ? "visual" : "fast draft";
@@ -211,8 +211,13 @@ std::map<std::string, Desired> desired_for_object(const ObjectAnalysis &obj, Int
         wall_reason += (boost::format("; +1 wall: %1% mm tall on a %2% mm wide base bends and snaps at layer lines") %
                         int(obj.height) % fmt_mm(obj.footprint_min)).str();
     }
+    // The counts above are for ~0.42 mm lines (0.4 nozzle). Keep the same wall thickness in mm for other
+    // line widths: 3 walls of 0.82 mm lines would be 2.5 mm of wall where 1.3 mm was meant.
+    if (const int n = std::max(2, int(std::lround(walls * 0.42 / line))); n != walls && std::abs(line - 0.42) > 0.05) {
+        wall_reason += (boost::format("; %1% walls of %2% mm lines give the same ~%3% mm thickness") % n % fmt_mm(line) % fmt_mm(walls * 0.42)).str();
+        walls = n;
+    }
     // A wall thinner than the requested shells is printed solid anyway; say so instead of adding walls.
-    const double line = 1.125 * nozzle;
     if (std::isfinite(obj.min_wall) && obj.min_wall < 2. * walls * line)
         wall_reason += (boost::format(" (thinnest wall ~%1% mm is solid either way)") % fmt_mm(obj.min_wall)).str();
     d["wall_loops"] = { std::to_string(walls), wall_reason };
@@ -276,6 +281,9 @@ std::vector<Suggestion> suggest(const std::vector<ObjectAnalysis> &objects, Inte
 
     const auto  *nozzles = full.option<ConfigOptionFloats>("nozzle_diameter");
     const double nozzle  = nozzles && !nozzles->values.empty() ? nozzles->values.front() : 0.4;
+    // The wall line width the slicer will use; 0 means its default for the nozzle.
+    const double line    = full.has("inner_wall_line_width") && full.opt_float("inner_wall_line_width") > 0. ?
+                               full.opt_float("inner_wall_line_width") : 1.125 * nozzle;
 
     // Layer height first: shell layer counts depend on it.
     double lh = full.opt_float("layer_height");
@@ -326,7 +334,7 @@ std::vector<Suggestion> suggest(const std::vector<ObjectAnalysis> &objects, Inte
     // otherwise per object.
     std::vector<std::map<std::string, Desired>> desired;
     for (const ObjectAnalysis &obj : objects)
-        desired.push_back(desired_for_object(obj, intent, lh, nozzle));
+        desired.push_back(desired_for_object(obj, intent, lh, line));
     for (const auto &[key, first] : desired.front()) {
         bool same = true, any_override = false;
         for (size_t i = 0; i < objects.size(); ++i) {
@@ -398,7 +406,6 @@ std::vector<Suggestion> suggest(const std::vector<ObjectAnalysis> &objects, Inte
     }
 
     // Walls thinner than two lines: Arachne varies the line width instead of leaving gaps or dropping the wall.
-    const double line = 1.125 * nozzle;
     for (const ObjectAnalysis &obj : objects)
         if (std::isfinite(obj.min_wall) && obj.min_wall < 2. * line && full.opt_serialize("wall_generator") == "classic") {
             plate("wall_generator", "arachne",

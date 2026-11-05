@@ -129,6 +129,18 @@ TEST_CASE("Rules suggest settings for the intent and geometry", "[SettingsAdviso
         s = suggest({ named(analyze_mesh(box(5, 5, 60)), "pillar", 0) }, Intent::Functional, cfg);
         CHECK(find(s, "wall_loops")->suggested == "5");
     }
+    SECTION("wide lines: same wall thickness, fewer walls") {
+        DynamicPrintConfig wide = cfg;
+        wide.set_deserialize_strict("nozzle_diameter", "0.8");
+        wide.set_deserialize_strict("inner_wall_line_width", "0.82");
+        wide.set_deserialize_strict("wall_loops", "3");
+        const ObjectAnalysis big = named(analyze_mesh(box(100, 100, 30)), "big", 0);
+        auto s = suggest({ big }, Intent::Functional, wide);
+        REQUIRE(find(s, "wall_loops"));
+        CHECK(find(s, "wall_loops")->suggested == "2"); // 3 x 0.42 mm ~ 2 x 0.82 mm
+        s = suggest({ cube }, Intent::Functional, wide); // small part: 4 walls of 0.42 -> 2 of 0.82
+        CHECK(find(s, "wall_loops")->suggested == "2");
+    }
     SECTION("overhang turns on supports") {
         indexed_triangle_set t = box(10, 10, 12, { 15, 15, 0 });
         its_merge(t, box(40, 40, 3, { 0, 0, 12 }));
