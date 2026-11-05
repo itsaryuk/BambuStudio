@@ -1,4 +1,5 @@
 #include "UnsavedChangesDialog.hpp"
+#include "PresetManagerDialog.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -2459,7 +2460,14 @@ DiffPresetDialog::DiffPresetDialog(MainFrame* mainframe)
     topSizer->AddSpacer(FromDIP(24));
     topSizer->Add(m_selector, 0, wxEXPAND | wxLEFT | wxRIGHT, side_margin);
     topSizer->AddSpacer(FromDIP(8));
-    topSizer->Add(m_show_all_presets, 0, wxEXPAND | wxLEFT | wxRIGHT, side_margin);
+    auto *many = new wxButton(this, wxID_ANY, _L("Compare many presets..."));
+    many->SetToolTip(_L("Open the Preset Manager: many presets side by side, with bulk edit"));
+    many->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { PresetManagerDialog(this, m_view_type == Preset::TYPE_INVALID ? Preset::TYPE_PRINT : m_view_type).ShowModal(); });
+    auto *options_row = new wxBoxSizer(wxHORIZONTAL);
+    options_row->Add(m_show_all_presets, 0, wxALIGN_CENTER_VERTICAL);
+    options_row->AddStretchSpacer();
+    options_row->Add(many, 0, wxALIGN_CENTER_VERTICAL);
+    topSizer->Add(options_row, 0, wxEXPAND | wxLEFT | wxRIGHT, side_margin);
 
     topSizer->AddSpacer(FromDIP(24));
     topSizer->Add(m_content, 1, wxEXPAND | wxBOTTOM | wxLEFT | wxRIGHT, side_margin);

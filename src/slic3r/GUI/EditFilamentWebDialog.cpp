@@ -16,6 +16,7 @@
 #include "Tab.hpp"
 #include "MsgDialog.hpp"
 #include "Plater.hpp"
+#include "PresetManagerDialog.hpp"
 
 using namespace nlohmann;
 
@@ -220,18 +221,14 @@ void EditFilamentWebDialog::rename_filament()
         if (fc.get_edited_preset().name == p->name && fc.current_is_dirty())
             return info(_L("This filament has unsaved changes. Save or discard them first."));
 
-    std::map<std::string, std::string> new_names, inherits, base_ids; // old preset name -> new name / parent / parent's cloud id
+    std::map<std::string, std::string> new_names; // old preset name -> new name
     for (const Preset *p : ours) {
         const std::string to = name + p->name.substr(old_name.size());
         if (to != p->name && fc.find_preset(to, false))
             return info(wxString::Format(_L("A preset named \"%s\" already exists."), from_u8(to)));
         new_names[p->name] = to;
-        inherits[p->name]  = p->inherits();
-        base_ids[p->name]  = p->base_id;
     }
 
-    const bool  login   = wxGetApp().is_user_login();
-    const auto  user_id = login ? wxGetApp().getAgent()->get_user_id() : std::string();
     const std::string selected = fc.get_selected_preset_name();
     std::string       new_selected;
 
@@ -246,50 +243,11 @@ void EditFilamentWebDialog::rename_filament()
         if (std::any_of(ours.begin(), ours.end(), [&](const Preset *p) { return p->name == selected; }))
             new_selected = selected; // reload the edited copy with the new vendor
     } else {
-        std::vector<std::string> failures;
-        fc.clone_presets(ours, failures, [&](Preset &p, Preset::Type &) {
-            const std::string from = p.name;
-            p.name       = new_names[from];
-            const std::string &parent = inherits[from]; // clone_presets clears it; a rename keeps the parent
-            p.inherits() = new_names.count(parent) ? new_names[parent] : parent;
+        const std::string err = rename_user_presets(fc, new_names, [&](Preset &p) {
             p.config.option<ConfigOptionStrings>("filament_vendor", true)->values = {vendor};
-            p.sync_info  = "create";
-            p.user_id    = user_id;
         });
-        if (!failures.empty()) return info(_L("Renaming failed."));
-        for (const auto &kv : new_names)
-            if (Preset *p = fc.find_preset(kv.second, false)) {
-                p->base_id = base_ids[kv.first]; // clone_presets clears it; the cloud diff needs the parent's id
-                p->save_info();                  // sync_info for the cloud upload
-            }
-
-        // User presets that inherit from a renamed base follow it.
-        std::vector<std::string> children;
-        for (const Preset &p : fc.get_presets())
-            if (!p.is_system && new_names.count(p.inherits()) && !new_names.count(p.name)) children.push_back(p.name);
-        for (const std::string &c : children)
-            if (Preset *p = fc.find_preset(c, false)) {
-                p->inherits() = new_names[p->inherits()];
-                p->save(nullptr);
-            }
-
-        if (new_names.count(selected)) {
-            new_selected = new_names[selected];
-            fc.select_preset_by_name(new_selected, true); // before the old one is deleted
-        }
-        for (const auto &[from, to] : new_names) {
-            Preset *p = fc.find_preset(from, false);
-            if (!p) continue;
-            if (!p->setting_id.empty()) {
-                fc.set_sync_info_and_save(p->name, p->setting_id, "delete", 0);
-                wxGetApp().delete_preset_from_cloud(p->setting_id);
-            }
-            fc.delete_preset(from);
-        }
-        for (std::string &slot : pb->filament_presets)
-            if (new_names.count(slot)) slot = new_names[slot];
-        pb->update_compatible(PresetSelectCompatibleType::Never);
-        pb->export_selections(*wxGetApp().app_config);
+        if (!err.empty()) return info(from_u8(err));
+        if (new_names.count(selected)) new_selected = new_names[selected];
     }
     BOOST_LOG_TRIVIAL(info) << "EditFilamentWebDialog: renamed " << old_name << " -> " << name << " (vendor " << vendor << ")";
 

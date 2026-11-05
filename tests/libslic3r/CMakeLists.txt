@@ -70,3 +70,8 @@ add_executable(arrange_dense_tests ${_TEST_NAME}_tests.cpp test_arrange_dense.cp
 target_link_libraries(arrange_dense_tests test_common libslic3r libslic3r_gui)
 set_property(TARGET arrange_dense_tests PROPERTY FOLDER "tests")
 add_test(arrange_dense_tests arrange_dense_tests ${CATCH_EXTRA_ARGS})
+
+add_executable(preset_bulk_edit_tests ${_TEST_NAME}_tests.cpp test_preset_bulk_edit.cpp)
+target_link_libraries(preset_bulk_edit_tests test_common libslic3r libslic3r_gui)
+set_property(TARGET preset_bulk_edit_tests PROPERTY FOLDER "tests")
+add_test(preset_bulk_edit_tests preset_bulk_edit_tests ${CATCH_EXTRA_ARGS})

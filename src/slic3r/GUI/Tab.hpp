@@ -363,6 +363,8 @@ public:
 
 	void		delete_preset();
 	void		copy_preset_to_printers();
+    // Lays each source (a user filament or process preset) over the matching system preset of the chosen printers.
+    static void copy_presets_to_printers(wxWindow *parent, Preset::Type type, const std::vector<std::string> &sources);
 	void		toggle_show_hide_incompatible();
 	void		update_show_hide_incompatible_button();
 	void		update_ui_from_settings();

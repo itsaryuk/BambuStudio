@@ -331,6 +331,8 @@ set(lisbslic3r_sources
     QuadricEdgeCollapse.cpp
     QuadricEdgeCollapse.hpp
     Semver.cpp
+    PresetBulkEdit.cpp
+    PresetBulkEdit.hpp
     SettingsAdvisor.cpp
     SettingsAdvisor.hpp
     ShortEdgeCollapse.cpp

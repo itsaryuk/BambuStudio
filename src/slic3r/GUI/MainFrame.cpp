@@ -1,5 +1,6 @@
 #include "MainFrame.hpp"
 #include "PrintQueue.hpp"
+#include "PresetManagerDialog.hpp"
 #include "GLToolbar.hpp"
 #include <wx/panel.h>
 #include <wx/notebook.h>
@@ -3394,6 +3395,8 @@ void MainFrame::init_menubar_as_editor()
         }, camera_fullscreen_item->GetId());
         append_menu_item(viewMenu, wxID_ANY, _L("Print Queue") + dots, _L("Show the prints waiting for their printer"),
             [this](wxCommandEvent &) { PrintQueueRunner::show_dialog(this); }, "", nullptr);
+        append_menu_item(viewMenu, wxID_ANY, _L("Preset Manager") + dots, _L("Compare and bulk edit many presets"),
+            [this](wxCommandEvent &) { PresetManagerDialog(this).ShowModal(); }, "", nullptr);
         viewMenu->AppendSeparator();
 
         //BBS perspective view

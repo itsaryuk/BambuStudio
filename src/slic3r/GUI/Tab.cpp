@@ -7659,87 +7659,104 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
 // copy inherits the target's own nozzle, speed and variant values and keeps following system updates.
 void Tab::copy_preset_to_printers()
 {
-    const Preset& src = m_presets->get_selected_preset();
-    if (m_presets->get_edited_preset().is_dirty) {
-        MessageDialog(this, _L("Save the changes to this preset first."), _L("Copy to other printers"), wxOK | wxICON_INFORMATION).ShowModal();
+    copy_presets_to_printers(this, m_type, {m_presets->get_selected_preset().name});
+}
+
+void Tab::copy_presets_to_printers(wxWindow *parent_win, Preset::Type type, const std::vector<std::string> &sources)
+{
+    PresetBundle     *bundle  = wxGetApp().preset_bundle;
+    PresetCollection &presets = type == Preset::TYPE_FILAMENT ? bundle->filaments : bundle->prints;
+    if (presets.current_is_dirty()) {
+        MessageDialog(parent_win, _L("Save the changes to this preset first."), _L("Copy to other printers"), wxOK | wxICON_INFORMATION).ShowModal();
         return;
     }
-    const Preset* parent = m_presets->get_preset_base(src);
-    if (parent == nullptr || parent == &src || !parent->is_system) {
-        MessageDialog(this, _L("This preset is not based on a system preset, so there is nothing to match on other printers. Copy is available for presets created from a system preset."),
+    std::vector<std::string> not_based;
+    std::vector<std::string> srcs;
+    for (const std::string &n : sources) {
+        const Preset *src    = presets.find_preset(n, false);
+        const Preset *parent = src ? presets.get_preset_base(*src) : nullptr;
+        if (parent == nullptr || parent == src || !parent->is_system) not_based.push_back(n);
+        else srcs.push_back(n);
+    }
+    if (srcs.empty()) {
+        MessageDialog(parent_win, _L("This preset is not based on a system preset, so there is nothing to match on other printers. Copy is available for presets created from a system preset."),
                       _L("Copy to other printers"), wxOK | wxICON_INFORMATION).ShowModal();
         return;
     }
-    // Target printers: every visible printer preset other than the current one.
-    PresetCollection&        printers = m_preset_bundle->printers;
-    const std::string        current  = printers.get_selected_preset().name;
+    // Target printers: every visible printer preset; with one source, not the current printer.
+    PresetCollection&        printers = bundle->printers;
+    const std::string        current  = sources.size() == 1 ? printers.get_selected_preset().name : std::string();
     std::vector<std::string> names;
     wxArrayString            labels;
     for (const Preset& p : printers.get_presets())
         if (p.is_visible && !p.is_default && p.name != current) { names.push_back(p.name); labels.Add(from_u8(p.name)); }
-    wxMultiChoiceDialog dlg(this, wxString::Format(_L("Copy \"%s\" to these printers. Your changes are applied on top of each printer's own base preset."), from_u8(src.name)),
+    const wxString what = srcs.size() == 1 ? from_u8(srcs.front()) : wxString::Format(_L("%d presets"), int(srcs.size()));
+    wxMultiChoiceDialog dlg(parent_win, wxString::Format(_L("Copy \"%s\" to these printers. Your changes are applied on top of each printer's own base preset."), what),
                             _L("Copy to other printers"), labels);
     if (dlg.ShowModal() != wxID_OK || dlg.GetSelections().empty()) return;
 
-    // The user's changes against the parent; identity and printer-binding keys stay the target's.
-    t_config_option_keys keys;
-    for (const std::string& k : src.config.diff(parent->config))
-        if (!boost::starts_with(k, "compatible_") && !boost::ends_with(k, "_settings_id") && k != "inherits" && k != "filament_extruder_variant" &&
-            k != "print_extruder_variant" && k != "print_extruder_id" && k != "filament_vendor" && k != "default_filament_profile")
-            keys.push_back(k);
-    const std::string variant_key = m_type == Preset::TYPE_FILAMENT ? "filament_extruder_variant" : "print_extruder_variant";
-    const auto&       with_variant = m_type == Preset::TYPE_FILAMENT ? filament_options_with_variant : print_options_with_variant;
-    const std::string prefix       = src.name.substr(0, src.name.find(" @"));
-    const std::string old_selected = src.name;
+    const std::string variant_key = type == Preset::TYPE_FILAMENT ? "filament_extruder_variant" : "print_extruder_variant";
+    const auto&       with_variant = type == Preset::TYPE_FILAMENT ? filament_options_with_variant : print_options_with_variant;
+    const std::string old_selected = presets.get_selected_preset().name;
 
     std::vector<std::string> done, skipped, lost;
     std::set<std::string>    written;
-    for (int sel : dlg.GetSelections()) {
-        const Preset&                 printer = *printers.find_preset(names[sel], false);
-        const PresetWithVendorProfile target  = printers.get_preset_with_vendor_profile(printer);
-        const Preset*                 base    = nullptr;
-        for (const Preset& p : m_presets->get_presets())
-            if (p.is_system && p.alias == parent->alias && is_compatible_with_printer(m_presets->get_preset_with_vendor_profile(p), target)) { base = &p; break; }
-        if (base == nullptr) { skipped.push_back(printer.name); continue; }
-        const size_t at   = base->name.find(" @");
-        const std::string name = prefix + (at != std::string::npos ? base->name.substr(at) : " @" + printer.name);
-        if (!written.insert(name).second) continue; // several nozzles of one printer share a base preset
-        if (const Preset* existing = m_presets->find_preset(name, false); existing != nullptr && (existing->is_system || existing == &src)) { skipped.push_back(printer.name); continue; }
-
-        Preset copy = *base;
-        const auto* src_var = src.config.option<ConfigOptionStrings>(variant_key);
-        const auto* dst_var = copy.config.option<ConfigOptionStrings>(variant_key);
-        for (const std::string& k : keys) {
-            const ConfigOption* from = src.config.option(k);
-            ConfigOption*       to   = copy.config.option(k, true);
-            if (from == nullptr || to == nullptr) continue;
-            auto* to_vec   = dynamic_cast<ConfigOptionVectorBase*>(to);
-            auto* from_vec = dynamic_cast<const ConfigOptionVectorBase*>(from);
-            if (to_vec != nullptr && from_vec != nullptr && with_variant.count(k) && src_var != nullptr && dst_var != nullptr &&
-                from_vec->size() == src_var->values.size() && to_vec->size() == dst_var->values.size()) {
-                // One value per nozzle variant: copy by variant name, keep the target's value for variants the source lacks.
-                for (size_t j = 0; j < dst_var->values.size(); ++j) {
-                    const auto i = std::find(src_var->values.begin(), src_var->values.end(), dst_var->values[j]) - src_var->values.begin();
-                    if (size_t(i) < src_var->values.size()) to_vec->set_at(from, j, size_t(i));
-                }
-            } else if (to_vec != nullptr && from_vec != nullptr && to_vec->size() != from_vec->size()) {
-                lost.push_back(k); // different layout and no variant names to match on
-            } else
-                to->set(from);
-        }
-        const bool existed = m_presets->find_preset(name, false) != nullptr;
-        m_presets->save_current_preset(name, false, false, &copy);
-        if (Preset* saved = m_presets->find_preset(name, false, true)) {
-            saved->sync_info = existed ? "update" : "create";
-            if (!existed && wxGetApp().is_user_login()) saved->user_id = wxGetApp().getAgent()->get_user_id();
-            saved->save_info();
-        }
-        done.push_back(name);
+    for (const std::string &src_name : srcs) {
+        // Copied by value: saving into the collection can move presets.
+        const Preset src    = *presets.find_preset(src_name, false);
+        const Preset parent = *presets.get_preset_base(src);
+        // The user's changes against the parent; identity and printer-binding keys stay the target's.
+        t_config_option_keys keys;
+        for (const std::string& k : src.config.diff(parent.config))
+            if (!boost::starts_with(k, "compatible_") && !boost::ends_with(k, "_settings_id") && k != "inherits" && k != "filament_extruder_variant" &&
+                k != "print_extruder_variant" && k != "print_extruder_id" && k != "filament_vendor" && k != "default_filament_profile")
+                keys.push_back(k);
+        const std::string prefix       = src.name.substr(0, src.name.find(" @"));
+        for (int sel : dlg.GetSelections()) {
+            const Preset&                 printer = *printers.find_preset(names[sel], false);
+            const PresetWithVendorProfile target  = printers.get_preset_with_vendor_profile(printer);
+            const Preset*                 base    = nullptr;
+            for (const Preset& p : presets.get_presets())
+                if (p.is_system && p.alias == parent.alias && is_compatible_with_printer(presets.get_preset_with_vendor_profile(p), target)) { base = &p; break; }
+            if (base == nullptr) { skipped.push_back(src.name + " → " + printer.name); continue; }
+            const size_t at   = base->name.find(" @");
+            const std::string name = prefix + (at != std::string::npos ? base->name.substr(at) : " @" + printer.name);
+            if (!written.insert(name).second) continue; // several nozzles of one printer share a base preset
+            if (const Preset* existing = presets.find_preset(name, false); existing != nullptr && (existing->is_system || existing->name == src.name)) { skipped.push_back(src.name + " → " + printer.name); continue; }
+            Preset copy = *base;
+            const auto* src_var = src.config.option<ConfigOptionStrings>(variant_key);
+            const auto* dst_var = copy.config.option<ConfigOptionStrings>(variant_key);
+            for (const std::string& k : keys) {
+                const ConfigOption* from = src.config.option(k);
+                ConfigOption*       to   = copy.config.option(k, true);
+                if (from == nullptr || to == nullptr) continue;
+                auto* to_vec   = dynamic_cast<ConfigOptionVectorBase*>(to);
+                auto* from_vec = dynamic_cast<const ConfigOptionVectorBase*>(from);
+                if (to_vec != nullptr && from_vec != nullptr && with_variant.count(k) && src_var != nullptr && dst_var != nullptr &&
+                    from_vec->size() == src_var->values.size() && to_vec->size() == dst_var->values.size()) {
+                    // One value per nozzle variant: copy by variant name, keep the target's value for variants the source lacks.
+                    for (size_t j = 0; j < dst_var->values.size(); ++j) {
+                        const auto i = std::find(src_var->values.begin(), src_var->values.end(), dst_var->values[j]) - src_var->values.begin();
+                        if (size_t(i) < src_var->values.size()) to_vec->set_at(from, j, size_t(i));
+                    }
+                } else if (to_vec != nullptr && from_vec != nullptr && to_vec->size() != from_vec->size()) {
+                    lost.push_back(k); // different layout and no variant names to match on
+                } else
+                    to->set(from);
+            }
+            const bool existed = presets.find_preset(name, false) != nullptr;
+            presets.save_current_preset(name, false, false, &copy);
+            if (Preset* saved = presets.find_preset(name, false, true)) {
+                saved->sync_info = existed ? "update" : "create";
+                if (!existed && wxGetApp().is_user_login()) saved->user_id = wxGetApp().getAgent()->get_user_id();
+                saved->save_info();
+            }
+            done.push_back(name);
     }
-    m_presets->select_preset_by_name(old_selected, true); // saving selected each copy
-    m_preset_bundle->update_compatible(PresetSelectCompatibleType::Never);
-    update_tab_ui();
-    on_presets_changed();
+    }
+    presets.select_preset_by_name(old_selected, true); // saving selected each copy
+    bundle->update_compatible(PresetSelectCompatibleType::Never);
+    if (Tab *tab = wxGetApp().get_tab(type)) tab->update_tab_ui(true);
 
     wxString msg = done.empty() ? _L("Nothing was copied.") : _L("Created or updated:") + "\n";
     for (const std::string& n : done) msg += "  " + from_u8(n) + "\n";
@@ -7752,7 +7769,8 @@ void Tab::copy_preset_to_printers()
         lost.erase(std::unique(lost.begin(), lost.end()), lost.end());
         msg += "\n" + _L("Kept the target's values for these settings, because the printers lay them out differently:") + "\n  " + from_u8(boost::join(lost, ", "));
     }
-    MessageDialog(this, msg, _L("Copy to other printers"), wxOK | wxICON_INFORMATION).ShowModal();
+    if (!not_based.empty()) msg += "\n" + _L("Not based on a system preset, so not copied:") + "\n  " + from_u8(boost::join(not_based, "\n  ")) + "\n";
+    MessageDialog(parent_win, msg, _L("Copy to other printers"), wxOK | wxICON_INFORMATION).ShowModal();
 }
 
 void Tab::delete_preset()

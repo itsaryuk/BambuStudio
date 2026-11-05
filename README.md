@@ -100,13 +100,23 @@ The Filament Manager keeps its spools on your computer (`filament_inventory/spoo
 ![Filament Manager with spools](docs/images/spool-inventory.png)
 
 ### Presets and printing
-- Copy a user filament or process preset to other printers: your changes are laid over the matching system preset of each chosen printer, so the copy keeps that printer's nozzle and speed values.
+- Copy a user filament or process preset to other printers (several at once from the Preset Manager): your changes are laid over the matching system preset of each chosen printer, so the copy keeps that printer's nozzle and speed values.
 - Send print job: hovering a filament shows the flow dynamics profile and K value the printer holds for that slot, and a line explains what Auto, On and Off calibration do with the selected profiles.
 
 **Copy a preset to other printers:** open one of your own filament or process presets (the button is hidden on system presets), click the copy button next to save/delete, tick the printers.
 
 ![Copy button](docs/images/copy-preset-button.png)
 ![Choose printers](docs/images/copy-preset-dialog.png)
+
+### Preset Manager
+For when you have many printers, filaments and processes. *View → Preset Manager...*, or *Compare many presets...* in the Compare dialog.
+- **Compare many at once.** One row per preset, one column per setting. Filter by name and printer, show system presets read-only next to yours. *Only differences* fills the columns with every setting that differs between the ticked presets.
+- **Set value.** Change one setting in all ticked presets: `15%` sets it, `+5` / `-5` change it by that amount, `+10%` / `-10%` scale it, `=-0.1` sets a negative value. You see every old → new value before saving.
+- **Take values.** Click a preset row, tick others, pick which of its differing settings to copy into them. Combined with *Delete*, this merges presets.
+- **Rename** (find and replace in names), **Delete**, **Copy to printers** for all ticked presets.
+- **Find duplicates** ticks presets identical to another one, or with no changes from the preset they are based on.
+
+Saving works like a normal save: only your changes against the parent preset are stored (a value set back to the parent's is no longer an override), and the cloud copy is updated. A preset with unsaved edits in the editor is skipped. Printers can be compared and edited, but renamed and deleted only from the printer settings.
 
 ### Custom filaments
 - **Serial is optional.** Vendor and type are enough: "Prusament PLA", not "Prusament PLA PLA".
