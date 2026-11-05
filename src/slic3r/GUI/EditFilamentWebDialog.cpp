@@ -3,7 +3,6 @@
 #include <wx/webview.h>
 #include <boost/format.hpp>
 #include <boost/algorithm/string.hpp>
-#include <boost/log/trivial.hpp>
 
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
@@ -17,6 +16,7 @@
 #include "MsgDialog.hpp"
 #include "Plater.hpp"
 #include "PresetManagerDialog.hpp"
+#include "libslic3r/Log.hpp"
 
 using namespace nlohmann;
 
@@ -162,8 +162,7 @@ void EditFilamentWebDialog::send_filament_edit_data()
         wxString::FromUTF8(msg.dump(-1, ' ', false, json::error_handler_t::ignore)));
     run_script(js);
 
-    BOOST_LOG_TRIVIAL(info) << "EditFilamentWebDialog::send_filament_edit_data: "
-                            << m_filament_name << " presets=" << presets_arr.size();
+    BOOST_LOG_TRIVIAL(info) << m_filament_name << " presets=" << presets_arr.size();
 }
 
 // ── Rename ─────────────────────────────────────────────────────────────────
@@ -353,7 +352,7 @@ void EditFilamentWebDialog::OnScriptMessage(wxWebViewEvent &evt)
             send_filament_edit_data();
         }
     } catch (const std::exception &e) {
-        BOOST_LOG_TRIVIAL(error) << "EditFilamentWebDialog::OnScriptMessage exception: " << e.what();
+        BOOST_LOG_TRIVIAL(error) << "exception: " << e.what();
     }
 }
 

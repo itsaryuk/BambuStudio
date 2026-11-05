@@ -3,6 +3,7 @@
 #include "FileTransferUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
+#include "libslic3r/Log.hpp"
 
 namespace Slic3r {
 
@@ -60,7 +61,9 @@ FileTransferTunnel::FileTransferTunnel(FileTransferModule &m, const std::string 
         if (!cb) return;
         try {
             cb(old_status, new_status, err_code, std::string(msg ? msg : ""));
-        } catch (...) {}
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(warning) << current_exception_message();
+        }
     };
     if (m_->ft_tunnel_set_status_cb(h_, tramp, guard_) == ft_err::FT_EXCEPTION) { throw std::runtime_error("ft_tunnel_set_status_cb failed"); }
 }
@@ -78,7 +81,9 @@ void FileTransferTunnel::start_connect()
         if (!cb) return;
         try {
             cb(ok == 0, ec, std::string(msg ? msg : ""));
-        } catch (...) {}
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(warning) << current_exception_message();
+        }
     };
     if (m_->ft_tunnel_start_connect(h_, tramp, guard_) == ft_err::FT_EXCEPTION) { throw std::runtime_error("ft_tunnel_start_connect failed"); }
 }
@@ -132,7 +137,9 @@ FileTransferJob::FileTransferJob(FileTransferModule &m, const std::string &param
         if (cb) {
             try {
                 cb(res, resp_ec, std::move(json), std::move(bin));
-            } catch (...) {}
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(warning) << current_exception_message();
+            }
         }
 
         // Free the plugin-owned result exactly once, even when the job object is already gone.
@@ -145,7 +152,9 @@ FileTransferJob::FileTransferJob(FileTransferModule &m, const std::string &param
                     if (r.bin) mod->ft_free((void *) r.bin);
                 }
             }
-        } catch (...) {}
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(warning) << current_exception_message();
+        }
     };
 
     if (m_->ft_job_set_result_cb(h_, tramp, guard_) == ft_err::FT_EXCEPTION) { throw std::runtime_error("ft_job_set_result_cb failed"); }
@@ -193,7 +202,9 @@ void FileTransferJob::on_msg(MsgCb cb)
         }
         try {
             if (cb) cb(m.kind, std::string(m.json ? m.json : ""));
-        } catch (...) {}
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(warning) << current_exception_message();
+        }
 
         try {
             if (mod) {
@@ -202,7 +213,9 @@ void FileTransferJob::on_msg(MsgCb cb)
                 else if (mod->ft_free && m.json)
                     mod->ft_free((void *) m.json);
             }
-        } catch (...) {}
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(warning) << current_exception_message();
+        }
     };
 
     if (m_->ft_job_set_msg_cb(h_, tramp, guard_) == ft_err::FT_EXCEPTION) { throw std::runtime_error("ft_job_set_msg_cb failed"); }
