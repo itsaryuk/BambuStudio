@@ -39,7 +39,9 @@ struct ObjectAnalysis
 
     // Pre-slice results (filled by the GUI job when a pre-slice ran; 0 = not measured).
     double sliced_max_top_area = 0.;  // mm^2, largest top surface on any layer
-    double sliced_overhang_area = 0.; // mm^2, total unsupported area over all layers
+    bool   presliced            = false;
+    double sliced_overhang_area = 0.; // mm^2, unsupported area over all layers that a bridge can't span
+    bool   support_on_part      = false; // some of that area has the part itself underneath, not the bed
 };
 
 // its must already be transformed to world coordinates. `canceled` is polled between chunks.

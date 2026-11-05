@@ -4,6 +4,7 @@
 #include <cmath>
 #include <map>
 
+#include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
 
 #include "AABBMesh.hpp"
@@ -33,6 +34,8 @@ static constexpr double MIN_WALL_HIT      = 0.05;     // mm
 // --- Rule thresholds -----------------------------------------------------------------------------
 // Unsupported downward area above this needs support.
 static constexpr double SUPPORT_AREA_MIN  = 25.;      // mm^2
+// Unsupported spans up to this wide between two supports bridge fine.
+static constexpr double BRIDGE_SPAN       = 10.;      // mm
 // Tall objects on a small base tip over / detach: height / sqrt(contact area) above this wants a brim.
 static constexpr double TIP_RATIO         = 4.;
 static constexpr double SMALL_CONTACT     = 100.;     // mm^2
@@ -155,15 +158,42 @@ bool preslice(const Model &model, DynamicPrintConfig config, std::vector<ObjectA
             continue;
         ObjectAnalysis &out = objects[it - model.objects.begin()];
         po->slice();
-        double max_top = 0., unsupported = 0.;
+        double   max_top = 0., unsupported = 0.;
+        Polygons below; // everything printed so far: overhangs above it need support starting on the part
         for (const Layer *layer : po->layers()) {
             if (layer->upper_layer)
                 max_top = std::max(max_top, area(diff_ex(layer->lslices, layer->upper_layer->lslices)) * mm2);
             else
                 max_top = std::max(max_top, area(layer->lslices) * mm2);
-            if (layer->lower_layer)
-                unsupported += area(diff_ex(layer->lslices, expand(to_polygons(layer->lower_layer->lslices), carried))) * mm2;
+            if (layer->lower_layer) {
+                const Polygons lower = to_polygons(layer->lower_layer->lslices);
+                const Polygons touch = expand(lower, carried + float(scale_(0.05)));
+                const Polygons reach = expand(lower, carried + float(scale_(0.5 * BRIDGE_SPAN)));
+                for (const ExPolygon &island : diff_ex(layer->lslices, expand(lower, carried))) {
+                    // A bridge: every point within half a span of something below, held on two or more sides
+                    // (or all around, like the roof of a closed box).
+                    if (diff_ex(ExPolygons{ island }, reach).empty()) {
+                        const Polylines held = intersection_pl(to_polylines(island), touch);
+                        double held_len = 0., len = 0.;
+                        for (const Polyline &pl : held) held_len += pl.length();
+                        for (const Polyline &pl : to_polylines(island)) len += pl.length();
+                        size_t sides = held.size();
+                        for (const Polyline &a : held) // contours are cut open at their first point: rejoin
+                            for (const Polyline &b : held)
+                                if (&a != &b && (a.last_point() - b.first_point()).cast<double>().norm() < scale_(0.01))
+                                    --sides;
+                        if (sides >= 2 || held_len > 0.6 * len)
+                            continue;
+                    }
+                    const double a = island.area() * mm2;
+                    unsupported += a;
+                    if (!out.support_on_part && a > 1. && !intersection(ExPolygons{ island }, below).empty())
+                        out.support_on_part = true;
+                }
+                below = union_(below, lower);
+            }
         }
+        out.presliced            = true;
         out.sliced_max_top_area  = max_top;
         out.sliced_overhang_area = unsupported;
     }
@@ -173,6 +203,19 @@ bool preslice(const Model &model, DynamicPrintConfig config, std::vector<ObjectA
 namespace {
 
 std::string fmt_mm(double v) { return (boost::format("%.2f") % v).str(); }
+// A length the way the config writes it, rounded to 0.01 mm, so it compares equal to the current value.
+std::string ser(double v) { return ConfigOptionFloat(std::round(v * 100.) / 100.).serialize(); }
+bool warps(std::string type)
+{
+    boost::to_upper(type);
+    auto is = [&type](const char *p) { return boost::starts_with(type, p); };
+    return is("ABS") || is("ASA") || is("PA") || is("NYLON") || is("PP") || (is("PC") && !is("PCTG"));
+}
+double first_of(const DynamicPrintConfig &c, const char *key, double def)
+{
+    const auto *o = c.option<ConfigOptionFloats>(key);
+    return o && !o->values.empty() ? o->values.front() : def;
+}
 
 // Current value of a key for one object: its own override wins over the plate config.
 std::string effective(const DynamicPrintConfig &full, const ObjectAnalysis &obj, const std::string &key)
@@ -197,26 +240,22 @@ std::map<std::string, Desired> desired_for_object(const ObjectAnalysis &obj, Int
     const bool large   = obj.volume > LARGE_VOLUME;
     const bool slender = obj.footprint_min > 0. && obj.height / obj.footprint_min > SLENDER_RATIO;
 
-    int walls = intent == Intent::Functional ? 3 : intent == Intent::Visual ? 3 : 2;
-    std::string wall_reason = (boost::format("%1% print: %2% walls") % intent_name % walls).str();
-    if (intent == Intent::Functional && small) {
-        walls = 4;
-        wall_reason = (boost::format("small functional part (%1% cm3): walls give most of the strength and cost little") % cm3).str();
-    } else if (intent == Intent::Visual && large) {
-        walls = 2;
+    // Walls carry more load per gram than infill, so functional parts get a thick wall (in mm, so it holds
+    // for any line width) and modest infill.
+    double wall_mm = intent == Intent::Functional ? 1.8 : intent == Intent::Visual ? 1.25 : 0.85;
+    std::string wall_reason = (boost::format("%1% print: about %2% mm of wall") % intent_name % fmt_mm(wall_mm)).str();
+    if (intent == Intent::Visual && large) {
+        wall_mm     = 0.85;
         wall_reason = (boost::format("large visual part (%1% cm3): 2 walls give a clean surface, more only add time") % cm3).str();
     }
+    int walls = std::max(2, int(std::lround(wall_mm / line)));
     if (slender && intent != Intent::Visual) {
         ++walls;
         wall_reason += (boost::format("; +1 wall: %1% mm tall on a %2% mm wide base bends and snaps at layer lines") %
                         int(obj.height) % fmt_mm(obj.footprint_min)).str();
     }
-    // The counts above are for ~0.42 mm lines (0.4 nozzle). Keep the same wall thickness in mm for other
-    // line widths: 3 walls of 0.82 mm lines would be 2.5 mm of wall where 1.3 mm was meant.
-    if (const int n = std::max(2, int(std::lround(walls * 0.42 / line))); n != walls && std::abs(line - 0.42) > 0.05) {
-        wall_reason += (boost::format("; %1% walls of %2% mm lines give the same ~%3% mm thickness") % n % fmt_mm(line) % fmt_mm(walls * 0.42)).str();
-        walls = n;
-    }
+    if (std::abs(line - 0.45) > 0.05)
+        wall_reason += (boost::format(" (%1% walls of %2% mm lines)") % walls % fmt_mm(line)).str();
     // A wall thinner than the requested shells is printed solid anyway; say so instead of adding walls.
     if (std::isfinite(obj.min_wall) && obj.min_wall < 2. * walls * line)
         wall_reason += (boost::format(" (thinnest wall ~%1% mm is solid either way)") % fmt_mm(obj.min_wall)).str();
@@ -225,18 +264,16 @@ std::map<std::string, Desired> desired_for_object(const ObjectAnalysis &obj, Int
     const double top_area = std::max(obj.top_flat_area, obj.sliced_max_top_area);
     switch (intent) {
     case Intent::Functional:
-        if (small)
-            d["sparse_infill_density"] = { "40%", (boost::format("small functional part (%1% cm3): dense infill adds stiffness for little time") % cm3).str() };
-        else if (large)
+        if (large)
             d["sparse_infill_density"] = { "20%", (boost::format("large functional part (%1% cm3): walls carry the load, 20%% keeps print time sane") % cm3).str() };
         else
-            d["sparse_infill_density"] = { "30%", (boost::format("functional part (%1% cm3): 30%% infill for strength") % cm3).str() };
+            d["sparse_infill_density"] = { "25%", "functional part: thick walls carry the load, infill above 25% adds little strength" };
         d["sparse_infill_pattern"] = { "gyroid", "gyroid is strong in every direction" };
         break;
     case Intent::Visual:
         d["sparse_infill_density"] = { "15%", "visual print: 15% is enough to support the top surfaces" };
         if (obj.volume > LIGHTNING_VOLUME)
-            d["sparse_infill_pattern"] = { "lightning", (boost::format("large visual part (%1% cm3): lightning only fills under the top surfaces, much faster") % cm3).str() };
+            d["sparse_infill_pattern"] = { "adaptivecubic", (boost::format("large visual part (%1% cm3): adaptive cubic is sparse inside and dense under the tops, so they don't pillow") % cm3).str() };
         else
             d["sparse_infill_pattern"] = { "gyroid", "gyroid doesn't show through thin walls as lines" };
         break;
@@ -259,8 +296,13 @@ std::map<std::string, Desired> desired_for_object(const ObjectAnalysis &obj, Int
         top_mm += 0.2;
         top_reason = (boost::format("large flat top (%1% mm2): thicker top shell avoids pillowing") % int(top_area)).str();
     }
+    if (d["sparse_infill_pattern"].value == "lightning" || std::stoi(d["sparse_infill_density"].value) <= 15) {
+        top_mm += 0.4;
+        top_reason += "; sparse infill gives the top little to rest on, +0.4 mm";
+    }
     const double bottom_mm = intent == Intent::Functional ? 0.8 : 0.6;
     d["top_shell_layers"]    = { std::to_string(int(std::ceil(top_mm / layer_height - 1e-6))), top_reason };
+    d["top_shell_thickness"] = { ser(top_mm), top_reason + " (also as a thickness, so it holds if the layer height changes)" };
     d["bottom_shell_layers"] = { std::to_string(int(std::ceil(bottom_mm / layer_height - 1e-6))),
                                  (boost::format("%1% mm of bottom shell") % fmt_mm(bottom_mm)).str() };
     return d;
@@ -279,11 +321,30 @@ std::vector<Suggestion> suggest(const std::vector<ObjectAnalysis> &objects, Inte
             out.push_back({ key, -1, full.opt_serialize(key), value, reason });
     };
 
-    const auto  *nozzles = full.option<ConfigOptionFloats>("nozzle_diameter");
-    const double nozzle  = nozzles && !nozzles->values.empty() ? nozzles->values.front() : 0.4;
-    // The wall line width the slicer will use; 0 means its default for the nozzle.
-    const double line    = full.has("inner_wall_line_width") && full.opt_float("inner_wall_line_width") > 0. ?
-                               full.opt_float("inner_wall_line_width") : 1.125 * nozzle;
+    const double nozzle = first_of(full, "nozzle_diameter", 0.4);
+
+    // Line widths scale with the nozzle. Only widened (or, for the outer wall, set) relative to what's there.
+    auto width = [&full, nozzle](const char *key) {
+        const double w = full.has(key) ? full.opt_float(key) : 0.;
+        return w > 0. ? w : 1.125 * nozzle; // 0: the slicer's default for the nozzle
+    };
+    auto set_width = [&](const char *key, double factor, bool narrow_too, const std::string &why) {
+        const double cur = width(key), want = std::round(factor * nozzle * 100.) / 100.;
+        if (want > cur + 0.015 || (narrow_too && want < cur - 0.015)) {
+            plate(key, ser(want), (boost::format(why) % fmt_mm(want) % fmt_mm(nozzle)).str());
+            return want;
+        }
+        return cur;
+    };
+    double line = width("inner_wall_line_width");
+    if (intent == Intent::Functional) {
+        line = set_width("inner_wall_line_width", 1.2, false, "functional part: %1% mm inner walls (1.2 x the %2% mm nozzle) bond better and are stronger");
+        set_width("sparse_infill_line_width", 1.2, false, "functional part: %1% mm infill lines (1.2 x the %2% mm nozzle) are stiffer");
+    } else if (intent == Intent::Visual) {
+        set_width("outer_wall_line_width", 1.05, true, "visual print: a %1% mm outer wall (about the %2% mm nozzle) gives the crispest surface");
+    }
+    if (std::any_of(objects.begin(), objects.end(), [](const ObjectAnalysis &o) { return o.bed_contact_area < SMALL_CONTACT; }))
+        set_width("initial_layer_line_width", 1.25, false, "small bed contact: a %1% mm first layer (1.25 x the %2% mm nozzle) holds better");
 
     // Layer height first: shell layer counts depend on it.
     double lh = full.opt_float("layer_height");
@@ -324,6 +385,10 @@ std::vector<Suggestion> suggest(const std::vector<ObjectAnalysis> &objects, Inte
         const auto *mx = full.option<ConfigOptionFloats>("max_layer_height");
         if (mn && !mn->values.empty()) target = std::max(target, mn->values.front());
         if (mx && !mx->values.empty() && mx->values.front() > 0.) target = std::min(target, mx->values.front());
+        // When the hotend's flow already limits the speed, thicker layers save no time and only cost quality.
+        const double mvs = first_of(full, "filament_max_volumetric_speed", 0.), speed = first_of(full, "inner_wall_speed", 0.);
+        if (target > lh && mvs > 0. && speed > 0. && lh * line * speed >= mvs)
+            target = lh;
         if (std::abs(target - lh) > 1e-6) {
             plate("layer_height", fmt_mm(target), why);
             lh = target;
@@ -352,19 +417,29 @@ std::vector<Suggestion> suggest(const std::vector<ObjectAnalysis> &objects, Inte
         }
     }
 
-    // Supports: plate-wide, needed if any object has a large flat unsupported area.
+    // Supports: plate-wide, needed if any object has a large unsupported area. The pre-slice leaves out spans
+    // that bridge; without it, every steep downward face counts.
+    auto needs_support = [](const ObjectAnalysis &o) { return o.presliced ? o.sliced_overhang_area : o.steep_overhang_area; };
     const ObjectAnalysis *worst_overhang = nullptr;
-    for (const ObjectAnalysis &obj : objects) {
-        const double area = std::max(obj.steep_overhang_area, obj.sliced_overhang_area);
-        if (area > SUPPORT_AREA_MIN && (!worst_overhang || area > std::max(worst_overhang->steep_overhang_area, worst_overhang->sliced_overhang_area)))
+    for (const ObjectAnalysis &obj : objects)
+        if (needs_support(obj) > SUPPORT_AREA_MIN && (!worst_overhang || needs_support(obj) > needs_support(*worst_overhang)))
             worst_overhang = &obj;
-    }
     if (worst_overhang) {
         plate("enable_support", "1",
-              (boost::format("'%1%' has %2% mm2 of unsupported overhang") % worst_overhang->name %
-               int(std::max(worst_overhang->steep_overhang_area, worst_overhang->sliced_overhang_area))).str());
+              (boost::format("'%1%' has %2% mm2 of overhang too wide to bridge") % worst_overhang->name % int(needs_support(*worst_overhang))).str());
         if (intent != Intent::Functional)
             plate("support_type", "tree(auto)", "tree supports leave fewer marks and are easier to remove");
+        if (std::all_of(objects.begin(), objects.end(), [](const ObjectAnalysis &o) { return o.presliced; })) {
+            const ObjectAnalysis *on_part = nullptr;
+            for (const ObjectAnalysis &obj : objects)
+                if (obj.support_on_part && needs_support(obj) > SUPPORT_AREA_MIN)
+                    on_part = &obj;
+            if (on_part)
+                plate("support_on_build_plate_only", "0",
+                      (boost::format("'%1%' has overhangs above the part itself, they'd be left unsupported") % on_part->name).str());
+            else
+                plate("support_on_build_plate_only", "1", "every overhang has the bed below it: supports never start on the part, no scars");
+        }
     } else {
         plate("enable_support", "0", "no object has an overhang that needs support");
     }
@@ -380,12 +455,14 @@ std::vector<Suggestion> suggest(const std::vector<ObjectAnalysis> &objects, Inte
             tippy       = &obj;
         }
     }
-    // Materials that shrink a lot warp at the corners of large footprints.
+    // Materials that shrink a lot warp at the corners of large footprints. Check the filament of every object.
     std::string warping_material;
-    if (const auto *types = full.option<ConfigOptionStrings>("filament_type"); types && !types->values.empty()) {
-        for (const char *m : { "ABS", "ASA", "PA", "PC", "NYLON" })
-            if (types->values.front().find(m) != std::string::npos)
-                warping_material = types->values.front();
+    if (const auto *types = full.option<ConfigOptionStrings>("filament_type")) {
+        for (const ObjectAnalysis &obj : objects) {
+            const int e = obj.overrides.has("extruder") ? std::max(1, obj.overrides.opt_int("extruder")) : 1;
+            if (e >= 1 && size_t(e) <= types->values.size() && warps(types->values[e - 1]))
+                warping_material = types->values[e - 1];
+        }
     }
     const ObjectAnalysis *large_base = nullptr;
     for (const ObjectAnalysis &obj : objects)

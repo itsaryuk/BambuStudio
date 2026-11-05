@@ -80,6 +80,30 @@ TEST_CASE("Pre-slice measures unsupported and top areas from layer outlines", "[
     std::vector<ObjectAnalysis> cube_objects(1);
     REQUIRE(preslice(cube_model, cfg, cube_objects));
     CHECK(cube_objects[0].sliced_overhang_area == Approx(0.).margin(1.));
+    CHECK_FALSE(objects[0].support_on_part); // the T's overhang has the bed below it
+
+    auto presliced = [&cfg](indexed_triangle_set its) {
+        Model        m;
+        ModelObject *o = m.add_object();
+        o->add_volume(TriangleMesh(its));
+        o->add_instance();
+        o->instances.front()->set_offset(Vec3d(100, 100, 0));
+        std::vector<ObjectAnalysis> a(1);
+        REQUIRE(preslice(m, cfg, a));
+        return a[0];
+    };
+    // An 8 mm span between two posts bridges: nothing needs support.
+    indexed_triangle_set bridge = box(10, 10, 10);
+    its_merge(bridge, box(10, 10, 10, { 18, 0, 0 }));
+    its_merge(bridge, box(28, 10, 3, { 0, 0, 10 }));
+    CHECK(presliced(bridge).sliced_overhang_area == Approx(0.).margin(1.));
+    // An overhang above a wider base needs support standing on the part.
+    indexed_triangle_set step = box(40, 40, 5);
+    its_merge(step, box(10, 10, 10, { 15, 15, 5 }));
+    its_merge(step, box(40, 40, 3, { 0, 0, 15 }));
+    const ObjectAnalysis s = presliced(step);
+    CHECK(s.sliced_overhang_area > 1000.);
+    CHECK(s.support_on_part);
 }
 
 TEST_CASE("Rules suggest settings for the intent and geometry", "[SettingsAdvisor]")
@@ -92,14 +116,16 @@ TEST_CASE("Rules suggest settings for the intent and geometry", "[SettingsAdviso
     cfg.set_deserialize_strict("enable_support", "0");
     cfg.set_deserialize_strict("brim_type", "no_brim");
     cfg.set_deserialize_strict("wall_generator", "classic");
+    cfg.set_deserialize_strict("filament_max_volumetric_speed", "30");
 
     const ObjectAnalysis cube = named(analyze_mesh(box(20, 20, 20)), "cube", 0);
 
-    SECTION("functional: more walls and infill, plate-wide; nothing that already matches") {
+    SECTION("functional: thick walls of wider lines, modest infill, plate-wide; nothing that already matches") {
         const auto s = suggest({ cube }, Intent::Functional, cfg);
+        CHECK(find(s, "inner_wall_line_width")->suggested == "0.48"); // 1.2 x 0.4
         REQUIRE(find(s, "wall_loops"));
-        CHECK(find(s, "wall_loops")->suggested == "4");               // 8 cm3: small part
-        CHECK(find(s, "sparse_infill_density")->suggested == "40%");
+        CHECK(find(s, "wall_loops")->suggested == "4");               // 1.8 mm / 0.48
+        CHECK(find(s, "sparse_infill_density")->suggested == "25%");
         REQUIRE(find(s, "layer_height"));                               // boxy: no slopes to show steps
         CHECK(find(s, "layer_height")->suggested == "0.24");
         CHECK_FALSE(find(s, "enable_support"));
@@ -110,10 +136,10 @@ TEST_CASE("Rules suggest settings for the intent and geometry", "[SettingsAdviso
         const ObjectAnalysis big = named(analyze_mesh(box(100, 100, 30)), "big", 0); // 300 cm3
         auto s = suggest({ big }, Intent::Functional, cfg);
         CHECK(find(s, "sparse_infill_density")->suggested == "20%");
-        CHECK(find(s, "wall_loops")->suggested == "3");
+        CHECK(find(s, "wall_loops")->suggested == "4");
 
         s = suggest({ big }, Intent::Visual, cfg);
-        CHECK(find(s, "sparse_infill_pattern")->suggested == "lightning");
+        CHECK(find(s, "sparse_infill_pattern")->suggested == "adaptivecubic");
         CHECK_FALSE(find(s, "wall_loops")); // 2 walls, already set
 
         // A cone is all sloped surface: visual goes to the finest layers.
@@ -137,9 +163,31 @@ TEST_CASE("Rules suggest settings for the intent and geometry", "[SettingsAdviso
         const ObjectAnalysis big = named(analyze_mesh(box(100, 100, 30)), "big", 0);
         auto s = suggest({ big }, Intent::Functional, wide);
         REQUIRE(find(s, "wall_loops"));
-        CHECK(find(s, "wall_loops")->suggested == "2"); // 3 x 0.42 mm ~ 2 x 0.82 mm
-        s = suggest({ cube }, Intent::Functional, wide); // small part: 4 walls of 0.42 -> 2 of 0.82
+        CHECK(find(s, "inner_wall_line_width")->suggested == "0.96"); // 1.2 x 0.8
+        CHECK(find(s, "wall_loops")->suggested == "2");                // 1.8 mm / 0.96
+        s = suggest({ cube }, Intent::Functional, wide);
         CHECK(find(s, "wall_loops")->suggested == "2");
+    }
+    SECTION("thicker layers are not suggested when flow already limits the speed") {
+        DynamicPrintConfig slow = cfg;
+        slow.set_deserialize_strict("filament_max_volumetric_speed", "2");
+        CHECK_FALSE(find(suggest({ cube }, Intent::Functional, slow), "layer_height"));
+        CHECK(find(suggest({ cube }, Intent::Functional, cfg), "layer_height"));
+    }
+    SECTION("sparse infill gets a thicker top") {
+        const auto s = suggest({ named(analyze_mesh(box(100, 100, 30)), "big", 0) }, Intent::Visual, cfg);
+        CHECK(find(s, "top_shell_thickness")->suggested == "1.6"); // 1.0 + 0.2 large top + 0.4 over 15%
+    }
+    SECTION("warping materials: every object's filament, PCTG doesn't count") {
+        const ObjectAnalysis base = named(analyze_mesh(box(80, 80, 10)), "base", 0);
+        DynamicPrintConfig two = cfg;
+        two.set_deserialize_strict("filament_type", "PCTG;PLA");
+        CHECK_FALSE(find(suggest({ base }, Intent::Functional, two), "brim_type"));
+        ObjectAnalysis on_second = base;
+        on_second.overrides.set_deserialize_strict("extruder", "2");
+        two.set_deserialize_strict("filament_type", "PLA;PA-CF");
+        CHECK(find(suggest({ on_second }, Intent::Functional, two), "brim_type"));
+        CHECK_FALSE(find(suggest({ base }, Intent::Functional, two), "brim_type"));
     }
     SECTION("overhang turns on supports") {
         indexed_triangle_set t = box(10, 10, 12, { 15, 15, 0 });
