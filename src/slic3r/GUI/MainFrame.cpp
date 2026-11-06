@@ -3738,6 +3738,9 @@ void MainFrame::init_menubar_as_editor()
 
      // OrcaSlicer calibrations
     {
+        append_menu_item(m_topbar->GetCalibMenu(), wxID_ANY, _L("New filament wizard"), _L("Temperature, then flow, pressure advance, retraction and max volumetric speed on one plate"),
+            [this](wxCommandEvent&) { NewFilament_Wizard_Dlg(this, m_plater).ShowModal(); }, "", nullptr,
+            [this]() { return m_plater->is_view3D_shown(); }, this);
         append_menu_item(m_topbar->GetCalibMenu(), wxID_ANY, _L("Temperature"), _L("Temperature Calibration"),
             [this](wxCommandEvent&) {
                 if (!m_temp_calib_dlg)

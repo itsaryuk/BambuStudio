@@ -760,4 +760,129 @@ void Retraction_Test_Dlg::on_dpi_changed(const wxRect& suggested_rect) {
 }
 
 
+
+template<typename T, typename Opt> static void set_config_values(DynamicPrintConfig *cfg, const std::string &key, T value)
+{
+    if (auto *o = cfg->option<Opt>(key))
+        for (auto &v : o->values) v = value;
+}
+
+static int temp_of(const DynamicPrintConfig &cfg, const std::string &key)
+{
+    const auto *o = dynamic_cast<const ConfigOptionVector<int> *>(cfg.option(key));
+    return o != nullptr && !o->values.empty() ? o->values.front() : 0;
+}
+
+NewFilament_Wizard_Dlg::NewFilament_Wizard_Dlg(wxWindow *parent, Plater *plater)
+    : DPIDialog(parent, wxID_ANY, _L("New filament wizard"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE), m_plater(plater)
+{
+    AppConfig *ac = wxGetApp().app_config;
+    if (!ac->get("new_filament", "mvs").empty()) {
+        m_calib.pa_end      = std::stod(ac->get("new_filament", "pa_end"));
+        m_calib.retract_end = std::stod(ac->get("new_filament", "retract_end"));
+        std::stringstream ss(ac->get("new_filament", "mvs"));
+        for (std::string v; std::getline(ss, v, ',');) m_calib.mvs.push_back(std::stod(v));
+    }
+    const auto &fil  = wxGetApp().preset_bundle->filaments.get_edited_preset().config;
+    const int   temp = ac->get("new_filament", "temp").empty() ? temp_of(fil, "nozzle_temperature") : std::stoi(ac->get("new_filament", "temp"));
+
+    auto *top  = new wxBoxSizer(wxVERTICAL);
+    auto  text = [&](const wxString &t, bool bold = false) {
+        auto *l = new wxStaticText(this, wxID_ANY, t);
+        if (bold) l->SetFont(l->GetFont().Bold());
+        l->Wrap(FromDIP(520));
+        top->Add(l, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
+    };
+    auto row = [&](const wxString &label, wxWindow *w) {
+        auto *h = new wxBoxSizer(wxHORIZONTAL);
+        h->Add(new wxStaticText(this, wxID_ANY, label), 1, wxALIGN_CENTER_VERTICAL);
+        h->Add(w, 0, wxLEFT, FromDIP(10));
+        top->Add(h, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
+    };
+    auto button = [&](const wxString &label, std::function<void()> f) {
+        auto *b = new wxButton(this, wxID_ANY, label);
+        b->Bind(wxEVT_BUTTON, [f](wxCommandEvent &) { f(); });
+        top->Add(b, 0, wxLEFT | wxTOP, FromDIP(10));
+        return b;
+    };
+
+    text(_L("1. Temperature"), true);
+    text(_L("Print a temperature tower and pick the block with the best surface, bridges and layer bonding."));
+    button(_L("Temperature tower..."), [this]() {
+        EndModal(wxID_CANCEL);
+        Plater *plater = m_plater;
+        wxGetApp().mainframe->CallAfter([plater]() { Temp_Calibration_Dlg(wxGetApp().mainframe, wxID_ANY, plater).ShowModal(); });
+    });
+    m_temp = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 150, 350, temp);
+    row(_L("Best temperature (°C)"), m_temp);
+
+    text(_L("2. Test plate"), true);
+    text(_L("One plate at that temperature: flow pads, a pressure advance tower, a retraction tower and six cylinders printed at rising flow."));
+    button(_L("Build test plate"), [this]() {
+        wxGetApp().app_config->set("new_filament", "temp", std::to_string(m_temp->GetValue()));
+        EndModal(wxID_OK);
+        Plater *plater = m_plater;
+        const int temp = m_temp->GetValue();
+        wxGetApp().mainframe->CallAfter([plater, temp]() { plater->calib_new_filament(temp); });
+    });
+
+    text(_L("3. Read the plate"), true);
+    if (m_calib.mvs.empty())
+        text(_L("Build and print the test plate first."));
+    else {
+        text(wxString::Format(_L("The towers change every mm above %.0f mm. Measure from the bed."), NewFilamentCalib::base));
+        m_flow = new wxChoice(this, wxID_ANY);
+        for (int m = -20; m <= 20; m += 5) m_flow->Append(wxString::Format("%+d", m));
+        m_flow->SetSelection(4);
+        row(_L("Flow pad with the smoothest top"), m_flow);
+        m_pa_h = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, m_calib.height(), NewFilamentCalib::base, 0.5);
+        row(_L("Pressure advance tower: height of the sharpest corners (mm)"), m_pa_h);
+        m_retract_h = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, m_calib.height(), NewFilamentCalib::base, 0.5);
+        row(_L("Retraction tower: lowest height without strings (mm)"), m_retract_h);
+        m_mvs = new wxChoice(this, wxID_ANY);
+        for (size_t i = 0; i < m_calib.mvs.size(); ++i) m_mvs->Append(wxString::Format(_L("%d (%.1f mm³/s)"), int(i + 1), m_calib.mvs[i]));
+        m_mvs->SetSelection(0);
+        row(_L("Fastest cylinder without gaps, counted from the left"), m_mvs);
+        m_result = new wxStaticText(this, wxID_ANY, "");
+        top->Add(m_result, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
+        auto update = [this](wxEvent &) {
+            m_result->SetLabel(wxString::Format(_L("Pressure advance %.3f, retraction %.2f mm, max volumetric speed %.1f mm³/s"),
+                                                m_calib.pa_at(m_pa_h->GetValue()), m_calib.retract_at(m_retract_h->GetValue()), m_calib.mvs[m_mvs->GetSelection()]));
+        };
+        m_pa_h->Bind(wxEVT_SPINCTRLDOUBLE, update);
+        m_retract_h->Bind(wxEVT_SPINCTRLDOUBLE, update);
+        m_mvs->Bind(wxEVT_CHOICE, update);
+        wxCommandEvent e;
+        update(e);
+        button(_L("Apply to filament"), [this]() { apply(); });
+    }
+    top->AddSpacer(FromDIP(10));
+    SetSizerAndFit(top);
+    CentreOnParent();
+}
+
+void NewFilament_Wizard_Dlg::apply()
+{
+    PresetCollection &filaments = wxGetApp().preset_bundle->filaments;
+    // The test plate raised the flow cap and turned off slow down; start from the saved preset again.
+    filaments.discard_current_changes();
+    DynamicPrintConfig &fil = filaments.get_edited_preset().config;
+
+    const int temp  = m_temp->GetValue();
+    const int delta = temp_of(fil, "nozzle_temperature_initial_layer") - temp_of(fil, "nozzle_temperature");
+    set_config_values<int, ConfigOptionIntsNullable>(&fil, "nozzle_temperature", temp);
+    set_config_values<int, ConfigOptionIntsNullable>(&fil, "nozzle_temperature_initial_layer", temp + delta);
+    long pad = 0;
+    m_flow->GetStringSelection().ToLong(&pad);
+    set_config_values<double, ConfigOptionFloatsNullable>(&fil, "filament_flow_ratio", fil.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0) * (1. + pad / 100.));
+    set_config_values<bool, ConfigOptionBoolsNullable>(&fil, "enable_pressure_advance", true);
+    set_config_values<double, ConfigOptionFloatsNullable>(&fil, "pressure_advance", m_calib.pa_at(m_pa_h->GetValue()));
+    set_config_values<double, ConfigOptionFloatsNullable>(&fil, "filament_retraction_length", m_calib.retract_at(m_retract_h->GetValue()));
+    set_config_values<double, ConfigOptionFloatsNullable>(&fil, "filament_max_volumetric_speed", m_calib.mvs[m_mvs->GetSelection()]);
+
+    m_plater->filament_tab_changed();
+    MessageDialog(this, _L("The values are in the filament settings now. Save the filament preset to keep them."), _L("New filament wizard"), wxOK | wxICON_INFORMATION).ShowModal();
+    EndModal(wxID_OK);
+}
+
 }} // namespace Slic3r::GUI

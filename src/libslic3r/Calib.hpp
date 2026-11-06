@@ -21,7 +21,8 @@ enum class CalibMode : int {
     Calib_Temp_Tower,
     Calib_Vol_speed_Tower,
     Calib_VFA_Tower,
-    Calib_Retraction_tower
+    Calib_Retraction_tower,
+    Calib_New_Filament
 };
 
 enum class CalibState {
@@ -371,5 +372,33 @@ private:
     const double m_glyph_padding_horizontal{1};
     const double m_glyph_padding_vertical{1};
 };
+
+
+class Model;
+class DynamicPrintConfig;
+
+// Stage 2 of the new filament wizard: one plate with flow pads, max volumetric speed cylinders and
+// two towers. Above `base` every mm raises pressure advance (corner tower) and retraction (string tower).
+struct NewFilamentCalib
+{
+    static constexpr double base  = 2.;  // mm printed with the preset values; the flow pads end below it
+    static constexpr int    steps = 15;  // one value per mm above base
+    double pa_end      = 0.1;
+    double retract_end = 1.5;
+    std::vector<double> mvs; // mm3/s, one cylinder each, left to right
+
+    NewFilamentCalib() = default;
+    NewFilamentCalib(bool bowden, double mvs_now);
+    double step_at(double z) const { return std::clamp(std::floor(z - base), 0., double(steps)); }
+    double pa_at(double z) const { return pa_end * step_at(z) / steps; }
+    double retract_at(double z) const { return retract_end * step_at(z) / steps; }
+    double height() const { return base + steps; }
+};
+
+// Fills `out` with the plate, placed inside `bed` (min/max xy). `cfg` is the full config before the test
+// edits: speeds of everything but the cylinders are capped to its max volumetric speed, because the test
+// raises that cap for the cylinders. Returns an error to show, empty on success.
+std::string build_new_filament_plate(Model &out, const NewFilamentCalib &c, const DynamicPrintConfig &cfg,
+                                     const std::string &resources_dir, const Vec2d &bed_min, const Vec2d &bed_max);
 
 } // namespace Slic3r

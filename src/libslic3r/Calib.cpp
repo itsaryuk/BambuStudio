@@ -2,6 +2,9 @@
 #include "Config.hpp"
 #include "Model.hpp"
 #include "GCode.hpp"
+#include "Flow.hpp"
+#include "TriangleMeshSlicer.hpp"
+#include <boost/filesystem/path.hpp>
 #include <cmath>
 
 
@@ -804,5 +807,139 @@ double CalibPressureAdvancePattern::max_numbering_height() const
 }
 
 double CalibPressureAdvancePattern::pattern_shift() const { return (wall_count() - 1) * line_spacing_first_layer() + line_width_first_layer() + m_glyph_padding_horizontal; }
+
+NewFilamentCalib::NewFilamentCalib(bool bowden, double mvs_now)
+    : pa_end(bowden ? 1.0 : 0.1), retract_end(bowden ? 6.0 : 1.5)
+{
+    for (double f = 0.8; f < 1.9; f += 0.2) mvs.push_back(std::round(mvs_now * f * 2.) / 2.);
+}
+
+std::string build_new_filament_plate(Model &out, const NewFilamentCalib &c, const DynamicPrintConfig &cfg,
+                                     const std::string &resources_dir, const Vec2d &bed_min, const Vec2d &bed_max)
+{
+    const double nozzle  = cfg.option<ConfigOptionFloats>("nozzle_diameter")->get_at(0);
+    const double mvs_now = cfg.option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(0);
+    const double first   = cfg.opt_float("initial_layer_print_height");
+    const double lh      = nozzle / 2.;
+    const auto   calib   = boost::filesystem::path(resources_dir) / "calib";
+
+    auto load = [&](const boost::filesystem::path &f) {
+        std::vector<ModelObject *> objs;
+        Model m = Model::read_from_file(f.string(), nullptr, nullptr, LoadStrategy::LoadModel | LoadStrategy::AddDefaultInstances);
+        for (ModelObject *o : m.objects) objs.push_back(out.add_object(*o));
+        return objs;
+    };
+    auto cut_to = [](ModelObject *o, double h) {
+        for (ModelVolume *v : o->volumes) {
+            indexed_triangle_set upper, lower;
+            cut_mesh(v->mesh().its, float(v->mesh().bounding_box().min.z() + h), &upper, &lower);
+            v->set_mesh(std::move(lower));
+            v->set_new_unique_id();
+        }
+        o->invalidate_bounding_box();
+    };
+
+    // Speeds of everything but the cylinders stay under the old cap. ponytail: one width (1.25 x nozzle)
+    // for every feature, so narrower lines end up a bit slower than they could be.
+    const double safe = std::floor(mvs_now / Flow(1.25 * nozzle, lh, nozzle).mm3_per_mm());
+    auto cap = [&](ModelObject *o) {
+        for (const char *key : {"outer_wall_speed", "inner_wall_speed", "sparse_infill_speed", "internal_solid_infill_speed",
+                                "top_surface_speed", "gap_infill_speed", "bridge_speed"}) {
+            const auto *opt = dynamic_cast<const ConfigOptionVector<double> *>(o->config.option(key));
+            if (opt == nullptr) opt = dynamic_cast<const ConfigOptionVector<double> *>(cfg.option(key));
+            if (opt == nullptr) continue;
+            std::vector<double> v = opt->values;
+            for (double &x : v) x = std::min(x, safe);
+            o->config.set_key_value(key, new ConfigOptionFloatsNullable(v));
+        }
+        o->config.set_key_value("layer_height", new ConfigOptionFloat(lh));
+    };
+
+    std::vector<std::vector<ModelObject *>> groups; // placed left to right, row by row
+
+    // Max volumetric speed: single wall cylinders, each at the speed that pushes its flow.
+    const double mvs_w = 1.5 * nozzle, mvs_lh = 0.6 * nozzle;
+    for (double target : c.mvs) {
+        ModelObject *o = out.add_object();
+        o->name        = "Max flow " + float_to_string_decimal_point(target, 1) + " mm3/s";
+        o->add_volume(make_cylinder(10., 10.));
+        o->add_instance();
+        const double speed = std::round(target / Flow(mvs_w, mvs_lh, nozzle).mm3_per_mm());
+        o->config.set_key_value("outer_wall_speed", new ConfigOptionFloatsNullable({speed}));
+        o->config.set_key_value("outer_wall_line_width", new ConfigOptionFloat(mvs_w));
+        o->config.set_key_value("layer_height", new ConfigOptionFloat(mvs_lh));
+        o->config.set_key_value("wall_loops", new ConfigOptionInt(1));
+        o->config.set_key_value("top_shell_layers", new ConfigOptionInt(0));
+        o->config.set_key_value("bottom_shell_layers", new ConfigOptionInt(1));
+        o->config.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
+        groups.push_back({o});
+    }
+
+    // Retraction: two posts, strings between them stop at some height.
+    for (ModelObject *o : load(calib / "retraction" / "retraction_tower.stl")) {
+        cut_to(o, c.height());
+        o->name = "Retraction";
+        o->config.set_key_value("wall_loops", new ConfigOptionInt(2));
+        o->config.set_key_value("top_shell_layers", new ConfigOptionInt(0));
+        o->config.set_key_value("bottom_shell_layers", new ConfigOptionInt(3));
+        o->config.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
+        cap(o);
+        groups.push_back({o});
+    }
+    // Pressure advance: corners turn sharp at some height.
+    for (ModelObject *o : load(calib / "pressure_advance" / "tower_with_seam.stl")) {
+        cut_to(o, c.height());
+        o->scale(Vec3d(0.6, 0.6, 1.));
+        o->name = "Pressure advance";
+        o->config.set_key_value("seam_position", new ConfigOptionEnum<SeamPosition>(spRear));
+        cap(o);
+        groups.push_back({o});
+    }
+    // Flow: the pads of the coarse flow test, each named after its flow change in %.
+    std::vector<ModelObject *> pads = load(calib / "filament_flow" / "flowrate-test-pass1.3mf");
+    const double xy = nozzle / 0.6 > 1.2 ? nozzle / 0.6 : 1.;
+    for (ModelObject *o : pads) {
+        o->scale(Vec3d(xy, xy, (first + 6 * lh) / 1.4));
+        std::string mod = o->name.substr(9); // flowrate_m15 -> -15
+        if (!mod.empty() && mod[0] == 'm') mod[0] = '-';
+        o->config.set_key_value("print_flow_ratio", new ConfigOptionFloat(1. + std::stod(mod) / 100.));
+        o->config.set_key_value("wall_loops", new ConfigOptionInt(3));
+        o->config.set_key_value("top_one_wall_type", new ConfigOptionEnum<TopOneWallType>(TopOneWallType::Topmost));
+        o->config.set_key_value("sparse_infill_density", new ConfigOptionPercent(35));
+        o->config.set_key_value("top_area_threshold", new ConfigOptionPercent(100));
+        o->config.set_key_value("bottom_shell_layers", new ConfigOptionInt(1));
+        o->config.set_key_value("top_shell_layers", new ConfigOptionInt(5));
+        o->config.set_key_value("detect_thin_wall", new ConfigOptionBool(true));
+        o->config.set_key_value("sparse_infill_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
+        o->config.set_key_value("top_surface_line_width", new ConfigOptionFloat(nozzle * 1.2));
+        o->config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloat(nozzle * 1.2));
+        o->config.set_key_value("top_surface_pattern", new ConfigOptionEnum<InfillPattern>(ipMonotonic));
+        o->config.set_key_value("infill_direction", new ConfigOptionFloat(45));
+        o->config.set_key_value("ironing_type", new ConfigOptionEnum<IroningType>(IroningType::NoIroning));
+        cap(o);
+    }
+    if (!pads.empty()) groups.push_back(pads);
+
+    // Shelf layout from the front left corner, in the order above.
+    const double margin = 10., gap = 8.;
+    double x = bed_min.x() + margin, y = bed_min.y() + margin, row = 0.;
+    for (std::vector<ModelObject *> &g : groups) {
+        BoundingBoxf3 bb;
+        for (ModelObject *o : g) {
+            o->ensure_on_bed();
+            bb.merge(o->instance_bounding_box(0));
+        }
+        const Vec3d size = bb.size();
+        if (x + size.x() > bed_max.x() - margin) { x = bed_min.x() + margin; y += row + gap; row = 0.; }
+        if (x + size.x() > bed_max.x() - margin || y + size.y() > bed_max.y() - margin)
+            return "The test plate does not fit on this bed.";
+        const Vec3d d(x - bb.min.x(), y - bb.min.y(), 0.);
+        for (ModelObject *o : g) o->translate_instances(d);
+        x += size.x() + gap;
+        row = std::max(row, size.y());
+    }
+    return {};
+}
+
 } // namespace Slic3r
 

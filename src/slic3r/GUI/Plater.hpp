@@ -453,6 +453,8 @@ public:
     void add_thermal_cooling_tower(float height); // hollow cylinder beside the parts so small layers get more time
     void calib_max_vol_speed(const Calib_Params &params);
     void calib_retraction(const Calib_Params &params);
+    void calib_new_filament(int temp);
+    void filament_tab_changed(); // the edited filament preset changed outside its tab
     void calib_VFA(const Calib_Params &params);
 
     // for helio slice

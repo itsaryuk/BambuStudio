@@ -25546,6 +25546,59 @@ void Plater::calib_retraction(const Calib_Params &params)
     p->background_process.fff_print()->set_calib_params(params);
 }
 
+void Plater::filament_tab_changed()
+{
+    wxGetApp().get_tab(Preset::TYPE_FILAMENT)->reload_config();
+    wxGetApp().get_tab(Preset::TYPE_FILAMENT)->update_dirty();
+}
+
+void Plater::calib_new_filament(int temp)
+{
+    model().calib_pa_pattern.reset(nullptr);
+    if (new_project(false, false, _L("New filament test")) == wxID_CANCEL) return;
+    wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
+
+    PresetBundle            *pb      = wxGetApp().preset_bundle;
+    const DynamicPrintConfig cfg     = pb->full_config();
+    const auto              *types   = cfg.option<ConfigOptionEnumsGeneric>("extruder_type");
+    const bool               bowden  = types != nullptr && !types->values.empty() && types->values[0] == int(ExtruderType::etBowden);
+    const NewFilamentCalib   c(bowden, cfg.option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(0));
+    const BoundingBoxf3      plate   = p->partplate_list.get_curr_plate()->get_bounding_box();
+    Model                    tmp;
+    const std::string        err     = build_new_filament_plate(tmp, c, cfg, Slic3r::resources_dir(), Vec2d(plate.min.x(), plate.min.y()), Vec2d(plate.max.x(), plate.max.y()));
+    if (!err.empty()) {
+        MessageDialog(this, from_u8(err), _L("New filament wizard"), wxOK | wxICON_WARNING).ShowModal();
+        return;
+    }
+    p->load_model_objects(tmp.objects);
+
+    // The cylinders need the flow cap out of the way; the wizard puts the saved preset back when it applies the results.
+    auto *fil = &pb->filaments.get_edited_preset().config;
+    set_config_values<int, ConfigOptionIntsNullable>(fil, "nozzle_temperature", temp);
+    set_config_values<int, ConfigOptionIntsNullable>(fil, "nozzle_temperature_initial_layer", temp);
+    if (auto *flush = fil->option<ConfigOptionFloatsNullable>("filament_flush_volumetric_speed"))
+        for (size_t i = 0; i < flush->values.size(); ++i)
+            if (flush->values[i] == 0) flush->values[i] = fil->option<ConfigOptionFloatsNullable>("filament_max_volumetric_speed")->get_at(i);
+    set_config_values<double, ConfigOptionFloatsNullable>(fil, "filament_max_volumetric_speed", c.mvs.back() * 1.1);
+    fil->set_key_value("slow_down_layer_time", new ConfigOptionInts{0});
+    wxGetApp().get_tab(Preset::TYPE_FILAMENT)->update_dirty();
+    wxGetApp().get_tab(Preset::TYPE_FILAMENT)->reload_config();
+
+    AppConfig  *ac = wxGetApp().app_config;
+    std::string mvs;
+    for (double v : c.mvs) mvs += (mvs.empty() ? "" : ",") + float_to_string_decimal_point(v, 1);
+    ac->set("new_filament", "pa_end", float_to_string_decimal_point(c.pa_end, 3));
+    ac->set("new_filament", "retract_end", float_to_string_decimal_point(c.retract_end, 2));
+    ac->set("new_filament", "mvs", mvs);
+    ac->save();
+
+    Calib_Params params;
+    params.mode  = CalibMode::Calib_New_Filament;
+    params.start = c.pa_end;
+    params.end   = c.retract_end;
+    p->background_process.fff_print()->set_calib_params(params);
+}
+
 void Plater::calib_VFA(const Calib_Params &params)
 {
     model().calib_pa_pattern.reset(nullptr);

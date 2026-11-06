@@ -5123,6 +5123,17 @@ GCode::LayerResult GCode::process_layer(
         sprintf(buf, "; Calib_Retraction_tower: Z_HEIGHT: %g, length:%g\n", print_z, _length);
         gcode += buf;
     }
+    else if (print.calib_mode() == CalibMode::Calib_New_Filament && print_z > NewFilamentCalib::base) {
+        NewFilamentCalib c;
+        c.pa_end      = print.calib_params().start;
+        c.retract_end = print.calib_params().end;
+        gcode += writer().set_pressure_advance(c.pa_at(print_z));
+        DynamicConfig _cfg;
+        _cfg.set_key_value("retraction_length", new ConfigOptionFloatsNullable{c.retract_at(print_z)});
+        writer().config.apply(_cfg);
+        gcode += "; Calib_New_Filament: Z_HEIGHT: " + float_to_string_decimal_point(print_z, 3) + ", pressure advance:" +
+                 float_to_string_decimal_point(c.pa_at(print_z), 4) + ", retraction:" + float_to_string_decimal_point(c.retract_at(print_z), 3) + "\n";
+    }
 
     //BBS
     if (first_layer) {
@@ -7816,7 +7827,7 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
     // speed cap so that speed stays constant across calibration objects, while keeping
     // other flow corrections (initial_layer_flow_ratio, top_solid_infill_flow_ratio,
     // m_sub_layer_flow_ratio) effective for speed limiting.
-    bool is_flow_calib = m_curr_print && m_curr_print->calib_mode() == CalibMode::Calib_Flow_Rate;
+    bool is_flow_calib = m_curr_print && (m_curr_print->calib_mode() == CalibMode::Calib_Flow_Rate || m_curr_print->calib_mode() == CalibMode::Calib_New_Filament);
     double flow_ratio  = this->config().print_flow_ratio.value;
     auto _mm3_per_mm_for_speed = (is_flow_calib && flow_ratio > 0) ? _mm3_per_mm / flow_ratio : _mm3_per_mm;
 

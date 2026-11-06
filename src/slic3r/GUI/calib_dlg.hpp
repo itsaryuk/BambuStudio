@@ -13,6 +13,8 @@
 #include "GUI_App.hpp"
 #include "wx/hyperlink.h"
 #include <wx/radiobox.h>
+#include <wx/spinctrl.h>
+#include <wx/choice.h>
 #include "libslic3r/Calib.hpp"
 
 namespace Slic3r { namespace GUI {
@@ -121,6 +123,28 @@ protected:
     TextInput* m_tiStep;
     Button* m_btnStart;
     Plater* m_plater;
+};
+
+
+// Two prints for a new filament: a temperature tower, then one plate for flow, pressure advance,
+// retraction and max volumetric speed. Reading the plate writes the values into the filament preset.
+class NewFilament_Wizard_Dlg : public DPIDialog
+{
+public:
+    NewFilament_Wizard_Dlg(wxWindow *parent, Plater *plater);
+    void on_dpi_changed(const wxRect &suggested_rect) override {}
+
+private:
+    void apply();
+
+    Plater           *m_plater;
+    NewFilamentCalib  m_calib; // of the last plate built, mvs empty if none
+    wxSpinCtrl       *m_temp{nullptr};
+    wxChoice         *m_flow{nullptr};
+    wxSpinCtrlDouble *m_pa_h{nullptr};
+    wxSpinCtrlDouble *m_retract_h{nullptr};
+    wxChoice         *m_mvs{nullptr};
+    wxStaticText     *m_result{nullptr};
 };
 
 }} // namespace Slic3r::GUI

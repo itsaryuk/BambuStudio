@@ -75,3 +75,9 @@ add_executable(preset_bulk_edit_tests ${_TEST_NAME}_tests.cpp test_preset_bulk_e
 target_link_libraries(preset_bulk_edit_tests test_common libslic3r libslic3r_gui)
 set_property(TARGET preset_bulk_edit_tests PROPERTY FOLDER "tests")
 add_test(preset_bulk_edit_tests preset_bulk_edit_tests ${CATCH_EXTRA_ARGS})
+
+# New filament calibration plate tests build on their own, like the ones above.
+add_executable(calib_tests ${_TEST_NAME}_tests.cpp test_calib_new_filament.cpp)
+target_link_libraries(calib_tests test_common libslic3r libslic3r_gui)
+set_property(TARGET calib_tests PROPERTY FOLDER "tests")
+add_test(calib_tests calib_tests ${CATCH_EXTRA_ARGS})
