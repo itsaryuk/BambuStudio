@@ -1,4 +1,7 @@
 #include <nlohmann/json.hpp>
+#include <cstdlib>
+#include <fstream>
+#include <map>
 #include "DevExtruderSystem.h"
 #include "DevFilaSystem.h"
 #include "DevFilaSwitch.h"
@@ -1661,6 +1664,16 @@ DevAmsTray* DevFilaSystemParser::ParseAmsTrayInfo(const json& j_tray, MachineObj
     std::string tray_id = DevJsonValParser::GetVal<std::string>(j_tray, "id");
     if (tray_id.empty()) {
         return nullptr;
+    }
+
+    // BAMBU_TAG_LOG=<file>: append each AMS slot report when it changes, to see what the AMS reads from a tag.
+    if (const char *log = std::getenv("BAMBU_TAG_LOG")) {
+        static std::map<std::string, std::string> last;
+        const std::string slot = curr_ams->GetAmsId() + "/" + tray_id, dump = j_tray.dump();
+        if (last[slot] != dump) {
+            last[slot] = dump;
+            std::ofstream(log, std::ios::app) << wxDateTime::Now().FormatISOCombined(' ').ToStdString() << " AMS " << slot << " " << dump << "\n";
+        }
     }
 
     // compare tray_list
